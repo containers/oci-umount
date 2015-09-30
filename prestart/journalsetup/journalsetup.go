@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -28,15 +27,6 @@ func main() {
 
 	if state.Root == "" {
 		log.Fatalf("Root should not be empty")
-	}
-
-	outputFile := "/tmp/simpleoutput.json"
-	bytes, err := json.MarshalIndent(&state, "", "\t")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := ioutil.WriteFile(outputFile, bytes, 0666); err != nil {
-		log.Fatal(err)
 	}
 
 	jDir := filepath.Join("/var/log/journal", state.ID)
