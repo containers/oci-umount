@@ -1,27 +1,21 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"syscall"
-)
 
-type State struct {
-	Version string `json:"version"`
-	ID      string `json:"id"`
-	Pid     int    `json:"pid"`
-	Root    string `json:"root"`
-}
+	"github.com/mrunalp/hooks"
+)
 
 const (
 	journalDir = "/var/log/journal"
 )
 
-func setupJournal(state *State) error {
+func setupJournal(state *hooks.State) error {
 	jDir := filepath.Join(journalDir, state.ID)
 	if err := os.MkdirAll(jDir, 0666); err != nil {
 		return err
@@ -39,7 +33,7 @@ func setupJournal(state *State) error {
 	return nil
 }
 
-func setupMachineID(state *State) error {
+func setupMachineID(state *hooks.State) error {
 	etcDir := filepath.Join("/tmp", state.Root, "/etc")
 	if err := os.MkdirAll(etcDir, 0666); err != nil {
 		return err
@@ -61,7 +55,7 @@ func setupMachineID(state *State) error {
 	return nil
 }
 
-func setup(state *State) error {
+func setup(state *hooks.State) error {
 	if err := setupJournal(state); err != nil {
 		return err
 	}
@@ -71,7 +65,7 @@ func setup(state *State) error {
 	return nil
 }
 
-func teardownJournal(state *State) error {
+func teardownJournal(state *hooks.State) error {
 	jcDir := filepath.Join(state.Root, journalDir, state.ID)
 	if err := syscall.Unmount(jcDir, syscall.MNT_DETACH); err != nil {
 		return err
@@ -87,7 +81,7 @@ func teardownJournal(state *State) error {
 	return nil
 }
 
-func teardownMachineID(state *State) error {
+func teardownMachineID(state *hooks.State) error {
 	cmFile := filepath.Join(state.Root, "/etc/machine-id")
 	if err := syscall.Unmount(cmFile, syscall.MNT_DETACH); err != nil {
 		return err
@@ -104,7 +98,7 @@ func teardownMachineID(state *State) error {
 	return nil
 }
 
-func teardown(state *State) error {
+func teardown(state *hooks.State) error {
 	var err, err2 error
 	if err = teardownJournal(state); err != nil {
 		log.Printf("Journal teardown error: %q", err)
@@ -119,25 +113,16 @@ func teardown(state *State) error {
 }
 
 func main() {
-	var state State
-	if err := json.NewDecoder(os.Stdin).Decode(&state); err != nil {
+	state, err := hooks.GetStateFromStdin()
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	if state.ID == "" {
-		log.Fatalf("ID should not be empty")
-	}
-
-	if state.Root == "" {
-		log.Fatalf("Root should not be empty")
-	}
-
-	var err error
 	switch os.Args[0] {
 	case "prestart":
-		err = setup(&state)
+		err = setup(state)
 	case "poststop":
-		err = teardown(&state)
+		err = teardown(state)
 	default:
 		log.Fatalf("Invalid argument: %q", os.Args[0])
 	}
