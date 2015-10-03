@@ -21,7 +21,7 @@ func setupJournal(state *hooks.State) error {
 		return err
 	}
 
-	jcDir := filepath.Join(state.Root, journalDir, state.ID)
+	jcDir := filepath.Join(state.Root, journalDir)
 	if err := os.MkdirAll(jcDir, 0666); err != nil {
 		return err
 	}
@@ -66,16 +66,8 @@ func setup(state *hooks.State) error {
 }
 
 func teardownJournal(state *hooks.State) error {
-	jcDir := filepath.Join(state.Root, journalDir, state.ID)
+	jcDir := filepath.Join(state.Root, journalDir)
 	if err := syscall.Unmount(jcDir, syscall.MNT_DETACH); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(jcDir); err != nil {
-		return err
-	}
-
-	jDir := filepath.Join(journalDir, state.ID)
-	if err := os.RemoveAll(jDir); err != nil {
 		return err
 	}
 	return nil
