@@ -15,6 +15,17 @@ const (
 	journalDir = "/var/log/journal"
 )
 
+func setupRun(state *hooks.State) error {
+	runDir := filepath.Join(state.Root, "/run")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		return err
+	}
+	flags := syscall.MS_NOEXEC | syscall.MS_NODEV | MS_NOSUID
+	if syscall.Mount("tmpfs", runDir, "tmpfs", uintptr(flags), "mode=755"); err != nil {
+		return err
+	}
+	return nil
+}
 func setupJournal(state *hooks.State) error {
 	jDir := filepath.Join(journalDir, state.ID)
 	if err := os.MkdirAll(jDir, 0666); err != nil {
@@ -56,6 +67,9 @@ func setupMachineID(state *hooks.State) error {
 }
 
 func setup(state *hooks.State) error {
+	if err := setupRun(state); err != nil {
+		return err
+	}
 	if err := setupJournal(state); err != nil {
 		return err
 	}
