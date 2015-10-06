@@ -20,8 +20,8 @@ func setupRun(state *hooks.State) error {
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return err
 	}
-	flags := syscall.MS_NOEXEC | syscall.MS_NODEV | MS_NOSUID
-	if syscall.Mount("tmpfs", runDir, "tmpfs", uintptr(flags), "mode=755"); err != nil {
+	flags := syscall.MS_NOEXEC | syscall.MS_NODEV | syscall.MS_NOSUID
+	if err := syscall.Mount("tmpfs", runDir, "tmpfs", uintptr(flags), "mode=755"); err != nil {
 		return err
 	}
 	return nil
