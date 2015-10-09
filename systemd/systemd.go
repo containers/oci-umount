@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/mrunalp/hooks"
+	"github.com/opencontainers/runc/libcontainer/selinux"
 )
 
 const (
@@ -20,8 +21,16 @@ func setupRun(state *hooks.State) error {
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return err
 	}
+	con, err := selinux.Getfilecon(state.Root)
+	if err != nil {
+		return err
+	}
+	data := "mode=755,size=65535k"
 	flags := syscall.MS_NOEXEC | syscall.MS_NODEV | syscall.MS_NOSUID
-	if err := syscall.Mount("tmpfs", runDir, "tmpfs", uintptr(flags), "mode=755,size=65535k"); err != nil {
+	if selinux.SelinuxEnabled() {
+		data = fmt.Sprintf("mode=755,size=65535k,context=%q", con)
+	}
+	if err := syscall.Mount("tmpfs", runDir, "tmpfs", uintptr(flags), data); err != nil {
 		return err
 	}
 	return nil
