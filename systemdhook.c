@@ -134,9 +134,30 @@ int prestart(const char *rootfs, const char *id, int pid)
 
 int poststop(const char *roofs, const char *id, int pid)
 {
+	int ret = 0;
 	char tmp_id_path[PATH_MAX];
 	snprintf(tmp_id_path, PATH_MAX, "/tmp/%s/", id);
-	return 0;
+	char etc_dir_path[PATH_MAX];
+	snprintf(etc_dir_path, PATH_MAX, "/tmp/%s/etc", id);
+	char mid_path[PATH_MAX];
+	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
+
+	if (unlink(mid_path) != 0) {
+		pr_perror("Unable to remove %s", mid_path);
+		ret = 1;
+	}
+
+	if (rmdir(etc_dir_path) != 0) {
+		pr_perror("Unable to remove %s", etc_dir_path);
+		ret = 1;
+	}
+
+	if (rmdir(tmp_id_path) != 0) {
+		pr_perror("Unable to remove %s", tmp_id_path);
+		ret = 1;
+	}
+
+	return ret;
 }
 
 int main(int argc, char *argv[])
