@@ -112,7 +112,30 @@ int main(int argc, char *argv[])
 		pr_perror("Failed to mount tmpfs at /run");
 		exit(1);
 	}
-		
+
+	char journal_dir[PATH_MAX];
+	snprintf(journal_dir, PATH_MAX, "/var/log/journal/%s", id);
+	char cont_journal_dir[PATH_MAX];
+	snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
+	if (mkdir(journal_dir, 0666) == -1) {
+		if (errno != EEXIST) {
+			pr_perror("Failed to mkdir journal dir");
+			exit(1);
+		}
+	}
+
+	if (mkdir(cont_journal_dir, 0666) == -1) {
+		if (errno != EEXIST) {
+			pr_perror("Failed to mkdir container journal dir");
+			exit(1);
+		}
+	}
+
+	/* Mount journal directory at /var/log/journal in the container */
+	if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
+		pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
+	}
+
 	yajl_tree_free(node);
 	return EXIT_SUCCESS;
 }
