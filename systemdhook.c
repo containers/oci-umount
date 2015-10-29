@@ -134,6 +134,55 @@ int main(int argc, char *argv[])
 	/* Mount journal directory at /var/log/journal in the container */
 	if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
 		pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
+		exit(1);
+	}
+
+	char tmp_id_path[PATH_MAX];
+	snprintf(tmp_id_path, PATH_MAX, "/tmp/%s/", id);
+	if (mkdir(tmp_id_path, 0666) == -1) {
+		if (errno != EEXIST) {
+			pr_perror("Failed to mkdir tmp id dir");
+			exit(1);
+		}
+	}
+
+	char etc_dir_path[PATH_MAX];
+	snprintf(etc_dir_path, PATH_MAX, "/tmp/%s/etc", id);
+	if (mkdir(etc_dir_path, 0666) == -1) {
+		if (errno != EEXIST) {
+			pr_perror("Failed to mkdir etc dir");
+			exit(1);
+		}
+	}
+
+	char mid_path[PATH_MAX];
+	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
+	FILE *fp = fopen(mid_path, "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Failed to open %s for writing\n", mid_path);
+		exit(1);
+	}
+
+	int rc;
+	rc = fprintf(fp, "%s", id);
+	if (rc < 0) {
+		fprintf(stderr, "Failed to write id to %s\n", mid_path);
+		exit(1);
+	}
+	fclose(fp);
+
+	char cont_mid_path[PATH_MAX];
+	snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
+	int mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
+	if (mfd < 0) {
+		pr_perror("Failed to open: %s", cont_mid_path);
+		exit(1);
+	}
+	close(mfd);
+
+	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, NULL) == -1) {
+		pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
+		exit(1);
 	}
 
 	yajl_tree_free(node);
