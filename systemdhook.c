@@ -12,8 +12,7 @@
 #include <linux/limits.h>
 #include <selinux/selinux.h>
 #include <selinux/context.h>
-
-#include "yajl/yajl_tree.h"
+#include <yajl/yajl_tree.h>
 
 #define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
@@ -44,9 +43,8 @@ static char *get_file_context(const char *filename) {
 	return NULL;
 }
 
-char *generate_mount_context(int pid) {
+int generate_mount_context(int pid, char **mount_context) {
 	security_context_t scon, tcon;
-	char *mountcon;
 
 	if (is_selinux_enabled() > 0) {
 		context_t con, con1;
@@ -54,29 +52,30 @@ char *generate_mount_context(int pid) {
 		int i = getpidcon(pid, &scon);
 		if (i < 0) {
 			perror("Failed to pidcon");
-			return NULL;
+			return -1;
 		}
 		con = context_new(scon);
 		level = context_range_get(con);
 		tcon = get_file_context(selinux_lxc_contexts_path());
 		if (tcon == NULL) {
 			perror("Failed to get lxc_context");
-			return NULL;
+			return -1;
 		}
 		con1 = context_new(tcon);
 		context_range_set(con1, level);
-		i = asprintf(&mountcon, "context=\"%s\"", context_str(con1));
+		i = asprintf(mount_context, "context=\"%s\"", context_str(con1));
 		if (i < 0) {
 			perror("Failed to allocate memory");
-			return NULL;
+			return -1;
 		}
 		context_free(con);
 		context_free(con1);
 		freecon(scon);
 		freecon(tcon);
-		return mountcon;
+		return 0;
 	}
-	return NULL;
+
+	return 0;
 }
 
 int prestart(const char *rootfs, const char *id, int pid)
@@ -89,8 +88,8 @@ int prestart(const char *rootfs, const char *id, int pid)
 	FILE *fp = NULL;
 	char *context = NULL;
 
-	mount_context = generate_mount_context(pid);
-	if (mount_context == NULL) {
+	rc = generate_mount_context(pid, &mount_context);
+	if (rc < 0) {
 		pr_perror("Failed to generate selinux context for /run");
 		goto out;
 	}
@@ -127,7 +126,11 @@ int prestart(const char *rootfs, const char *id, int pid)
 		}
 	}
 
-	rc = asprintf(&context, "mode=755,size=65536k,%s", mount_context);
+	if (mount_context == NULL) {
+		rc = asprintf(&context, "mode=755,size=65536k");
+	} else {
+		rc = asprintf(&context, "mode=755,size=65536k,%s", mount_context);
+	}
 	if (rc < 0) {
 		pr_perror("Failed to allocate memory for context");
 		goto out;
@@ -212,11 +215,11 @@ int prestart(const char *rootfs, const char *id, int pid)
 out:
 	if (mount_context)
 		free(mount_context);
-	if (fd > 0)
+	if (fd > -1)
 		close(fd);
 	if (fp)
 		fclose(fp);
-	if (mfd > 0)
+	if (mfd > -1)
 		close(mfd);
 	if (context)
 		free(context);
@@ -295,27 +298,27 @@ int main(int argc, char *argv[])
 	/* Extract values from the state json */
 	const char *root_path[] = { "root", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
-	char *rootfs = YAJL_GET_STRING(v_root);
 	if (!v_root) {
 		fprintf(stderr, "root not found in state\n");
 		goto out;
 	}
+	char *rootfs = YAJL_GET_STRING(v_root);
 
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
-	int target_pid = YAJL_GET_INTEGER(v_pid);
 	if (!v_pid) {
 		fprintf(stderr, "pid not found in state\n");
 		goto out;
 	}
+	int target_pid = YAJL_GET_INTEGER(v_pid);
 
 	const char *id_path[] = { "id", (const char *)0 };
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
-	char *id = YAJL_GET_STRING(v_id);
 	if (!v_id) {
 		fprintf(stderr, "id not found in state\n");
 		goto out;
 	}
+	char *id = YAJL_GET_STRING(v_id);
 
 
 	if (!strncmp("prestart", argv[1], sizeof("prestart"))) {
