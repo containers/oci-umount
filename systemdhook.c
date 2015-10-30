@@ -25,7 +25,7 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	int fd = -1;
 	int rc = -1;
 	FILE *fp = NULL;
-	char *context = NULL;
+	char *options = NULL;
 
 	char process_mnt_ns_fd[PATH_MAX];
 	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
@@ -60,19 +60,17 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	}
 
 	if (!strcmp("", mount_label)) {
-		rc = asprintf(&context, "mode=755,size=65536k");
+		rc = asprintf(&options, "mode=755,size=65536k");
 	} else {
-		rc = asprintf(&context, "mode=755,size=65536k,context=\"%s\"", mount_label);
+		rc = asprintf(&options, "mode=755,size=65536k,context=\"%s\"", mount_label);
 	}
 	if (rc < 0) {
 		pr_perror("Failed to allocate memory for context");
 		goto out;
 	}
 
-	fprintf(stdout, "Applying options: %s", context);
-
 	/* Mount tmpfs at /run for systemd */
-	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, context) == -1) {
+	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
 		pr_perror("Failed to mount tmpfs at /run");
 		goto out;
 	}
@@ -90,7 +88,7 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 
 	rc = setfilecon(journal_dir, mount_label);
 	if (rc < 0) {
-		pr_perror("Failed to set machine-id selinux context");
+		pr_perror("Failed to set journal dir selinux context");
 		goto out;
 	}
 
@@ -166,8 +164,8 @@ out:
 		fclose(fp);
 	if (mfd > -1)
 		close(mfd);
-	if (context)
-		free(context);
+	if (options)
+		free(options);
 
 	return ret;
 }
