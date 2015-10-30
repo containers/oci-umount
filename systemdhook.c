@@ -10,34 +10,42 @@
 #include <unistd.h>
 #include <errno.h>
 #include <linux/limits.h>
-
-#include "yajl/yajl_tree.h"
+#include <selinux/selinux.h>
+#include <yajl/yajl_tree.h>
 
 #define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
 
-int prestart(const char *rootfs, const char *id, int pid)
+int prestart(const char *rootfs, const char *id, int pid, const char *mount_label)
 {
-	char process_mnt_ns_fd[BUFLEN];
-	snprintf(process_mnt_ns_fd, BUFLEN - 1, "/proc/%d/ns/mnt", pid);	
-	int fd = open(process_mnt_ns_fd, O_RDONLY);
-	if (-1 == fd) {
+	int ret = 1;
+	int mfd = -1;
+	int fd = -1;
+	int rc = -1;
+	FILE *fp = NULL;
+	char *context = NULL;
+
+	char process_mnt_ns_fd[PATH_MAX];
+	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
+
+	fd = open(process_mnt_ns_fd, O_RDONLY);
+	if (fd < 0) {
 		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
-		return 1;
+		goto out;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
 		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
-		return 1;
+		goto out;
 	}
 
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
 		pr_perror("Failed to chdir");
-		return 1;
+		goto out;
 	}
 
 	char run_dir[PATH_MAX];
@@ -47,14 +55,26 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(run_dir, 0755) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir");
-			return 1;
+			goto out;
 		}
 	}
-			
+
+	if (!strcmp("", mount_label)) {
+		rc = asprintf(&context, "mode=755,size=65536k");
+	} else {
+		rc = asprintf(&context, "mode=755,size=65536k,context=\"%s\"", mount_label);
+	}
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for context");
+		goto out;
+	}
+
+	fprintf(stdout, "Applying options: %s", context);
+
 	/* Mount tmpfs at /run for systemd */
-	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, "mode=755,size=65536k") == -1) {
+	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, context) == -1) {
 		pr_perror("Failed to mount tmpfs at /run");
-		return 1;
+		goto out;
 	}
 
 	char journal_dir[PATH_MAX];
@@ -64,21 +84,27 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(journal_dir, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir journal dir");
-			return 1;
+			goto out;
 		}
+	}
+
+	rc = setfilecon(journal_dir, mount_label);
+	if (rc < 0) {
+		pr_perror("Failed to set machine-id selinux context");
+		goto out;
 	}
 
 	if (mkdir(cont_journal_dir, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir container journal dir");
-			return 1;
+			goto out;
 		}
 	}
 
 	/* Mount journal directory at /var/log/journal in the container */
 	if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
 		pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
-		return 1;
+		goto out;
 	}
 
 	char tmp_id_path[PATH_MAX];
@@ -86,7 +112,7 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(tmp_id_path, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir tmp id dir");
-			return 1;
+			goto out;
 		}
 	}
 
@@ -95,41 +121,55 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(etc_dir_path, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir etc dir");
-			return 1;
+			goto out;
 		}
 	}
 
 	char mid_path[PATH_MAX];
 	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
-	FILE *fp = fopen(mid_path, "w");
+	fp = fopen(mid_path, "w");
 	if (fp == NULL) {
 		fprintf(stderr, "Failed to open %s for writing\n", mid_path);
-		return 1;
+		goto out;
 	}
 
-	int rc;
 	rc = fprintf(fp, "%s", id);
 	if (rc < 0) {
 		fprintf(stderr, "Failed to write id to %s\n", mid_path);
-		return 1;
+		goto out;
 	}
-	fclose(fp);
+
+	rc = setfilecon(mid_path, mount_label);
+	if (rc < 0) {
+		pr_perror("Failed to set machine-id selinux context");
+		goto out;
+	}
 
 	char cont_mid_path[PATH_MAX];
 	snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
-	int mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
+	mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
 	if (mfd < 0) {
 		pr_perror("Failed to open: %s", cont_mid_path);
-		return 1;
+		goto out;
 	}
-	close(mfd);
 
 	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, NULL) == -1) {
 		pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
-		return 1;
+		goto out;
 	}
 
-	return 0;
+	ret = 0;
+out:
+	if (fd > -1)
+		close(fd);
+	if (fp)
+		fclose(fp);
+	if (mfd > -1)
+		close(mfd);
+	if (context)
+		free(context);
+
+	return ret;
 }
 
 int poststop(const char *roofs, const char *id, int pid)
@@ -163,32 +203,35 @@ int poststop(const char *roofs, const char *id, int pid)
 int main(int argc, char *argv[])
 {
 
-	if (argc < 2) {
+	if (argc < 3) {
 		fprintf(stderr, "Expect atleast 2 arguments");
 		exit(1);
 	}
 
 	size_t rd;
 	yajl_val node;
+	yajl_val config_node;
 	char errbuf[BUFLEN];
-	char fileData[CONFIGSZ];
+	char stateData[CONFIGSZ];
+	char configData[CONFIGSZ];
 	int ret = -1;
+	FILE *fp = NULL;
 
-	fileData[0] = 0;
+	stateData[0] = 0;
 	errbuf[0] = 0;
 
 	/* Read the entire config file from stdin */
-	rd = fread((void *)fileData, 1, sizeof(fileData) - 1, stdin);
+	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
 	if (rd == 0 && !feof(stdin)) {
 		fprintf(stderr, "error encountered on file read\n");
 		return 1;
-	} else if (rd >= sizeof(fileData) - 1) {
+	} else if (rd >= sizeof(stateData) - 1) {
 		fprintf(stderr, "config file too big\n");
 		return 1;
 	}
 
-	/* Parse the config */
-	node = yajl_tree_parse((const char *)fileData, errbuf, sizeof(errbuf));
+	/* Parse the state */
+	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
 		fprintf(stderr, "parse_error: ");
 		if (strlen(errbuf)) {
@@ -203,31 +246,68 @@ int main(int argc, char *argv[])
 	/* Extract values from the state json */
 	const char *root_path[] = { "root", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
-	char *rootfs = YAJL_GET_STRING(v_root);
 	if (!v_root) {
 		fprintf(stderr, "root not found in state\n");
 		goto out;
 	}
+	char *rootfs = YAJL_GET_STRING(v_root);
 
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
-	int target_pid = YAJL_GET_INTEGER(v_pid);
 	if (!v_pid) {
 		fprintf(stderr, "pid not found in state\n");
 		goto out;
 	}
+	int target_pid = YAJL_GET_INTEGER(v_pid);
 
 	const char *id_path[] = { "id", (const char *)0 };
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
-	char *id = YAJL_GET_STRING(v_id);
 	if (!v_id) {
 		fprintf(stderr, "id not found in state\n");
 		goto out;
 	}
+	char *id = YAJL_GET_STRING(v_id);
 
+	/* Parse the config file */
+	fp = fopen(argv[2], "r");
+	if (fp == NULL) {
+		fprintf(stderr, "Failed to open config file: %s\n", argv[2]);
+		goto out;
+	}
+	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
+	if (rd == 0 && !feof(fp)) {
+		fprintf(stderr, "error encountered on file read\n");
+		goto out;
+	} else if (rd >= sizeof(configData) - 1) {
+		fprintf(stderr, "config file too big\n");
+		goto out;
+	}
+
+	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
+	if (config_node == NULL) {
+		fprintf(stderr, "parse_error: ");
+		if (strlen(errbuf)) {
+			fprintf(stderr, " %s", errbuf);
+		} else {
+			fprintf(stderr, "unknown error");
+		}
+		fprintf(stderr, "\n");
+		goto out;
+	}
+
+	/* Extract values from the config json */
+	const char *mount_label_path[] = { "MountLabel", (const char *)0 };
+	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
+	if (!v_mount) {
+		fprintf(stderr, "MountLabel not found in config\n");
+		goto out;
+	}
+	char *mount_label = YAJL_GET_STRING(v_mount);
+
+	fprintf(stdout, "Mount Label parsed as: %s", mount_label);
 
 	if (!strncmp("prestart", argv[1], sizeof("prestart"))) {
-		if (prestart(rootfs, id, target_pid) != 0) {
+		if (prestart(rootfs, id, target_pid, mount_label) != 0) {
 			goto out;
 		}
 	} else if (!strncmp("poststop", argv[1], sizeof("poststop"))) {
@@ -242,5 +322,9 @@ int main(int argc, char *argv[])
 	ret = 0;
 out:
 	yajl_tree_free(node);
+	if (fp)
+		fclose(fp);
+	if (config_node)
+		yajl_tree_free(config_node);
 	return ret;
 }
