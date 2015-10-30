@@ -88,6 +88,12 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 		}
 	}
 
+	rc = setfilecon(journal_dir, mount_label);
+	if (rc < 0) {
+		pr_perror("Failed to set machine-id selinux context");
+		goto out;
+	}
+
 	if (mkdir(cont_journal_dir, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir container journal dir");
