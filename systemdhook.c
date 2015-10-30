@@ -10,8 +10,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <linux/limits.h>
-#include <selinux/selinux.h>
-#include <selinux/context.h>
 #include <yajl/yajl_tree.h>
 
 #define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
@@ -19,80 +17,14 @@
 #define BUFLEN 1024
 #define CONFIGSZ 65536
 
-static char *get_file_context(const char *filename) {
-	FILE *file = fopen(filename, "r");
-	char line [1000];
-	char key [1000];
-	char value [1000];
-
-	if (file != NULL) {
-		while(fgets(line, sizeof(line), file)!= NULL) /* read a line from a file */ {
-		sscanf(line, "%[^= ] = \"%[^\n\"]\"", key, value);
-		if (strcmp(key,"file") == 0) {
-			fclose(file);
-			return strdup(value);
-		}
-		}
-
-		fclose(file);
-	}
-	else {
-		perror(filename); //print the error message on stderr.
-	}
-
-	return NULL;
-}
-
-int generate_mount_context(int pid, char **mount_context) {
-	security_context_t scon, tcon;
-
-	if (is_selinux_enabled() > 0) {
-		context_t con, con1;
-		const char *level;
-		int i = getpidcon(pid, &scon);
-		if (i < 0) {
-			perror("Failed to pidcon");
-			return -1;
-		}
-		con = context_new(scon);
-		level = context_range_get(con);
-		tcon = get_file_context(selinux_lxc_contexts_path());
-		if (tcon == NULL) {
-			perror("Failed to get lxc_context");
-			return -1;
-		}
-		con1 = context_new(tcon);
-		context_range_set(con1, level);
-		i = asprintf(mount_context, "context=\"%s\"", context_str(con1));
-		if (i < 0) {
-			perror("Failed to allocate memory");
-			return -1;
-		}
-		context_free(con);
-		context_free(con1);
-		freecon(scon);
-		freecon(tcon);
-		return 0;
-	}
-
-	return 0;
-}
-
-int prestart(const char *rootfs, const char *id, int pid)
+int prestart(const char *rootfs, const char *id, int pid, const char *mount_label)
 {
 	int ret = 1;
-	char *mount_context = NULL;
 	int mfd = -1;
 	int fd = -1;
 	int rc = -1;
 	FILE *fp = NULL;
 	char *context = NULL;
-
-	rc = generate_mount_context(pid, &mount_context);
-	if (rc < 0) {
-		pr_perror("Failed to generate selinux context for /run");
-		goto out;
-	}
 
 	char process_mnt_ns_fd[PATH_MAX];
 	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
@@ -126,15 +58,17 @@ int prestart(const char *rootfs, const char *id, int pid)
 		}
 	}
 
-	if (mount_context == NULL) {
+	if (!strcmp("", mount_label)) {
 		rc = asprintf(&context, "mode=755,size=65536k");
 	} else {
-		rc = asprintf(&context, "mode=755,size=65536k,%s", mount_context);
+		rc = asprintf(&context, "mode=755,size=65536k,context=\"%s\"", mount_label);
 	}
 	if (rc < 0) {
 		pr_perror("Failed to allocate memory for context");
 		goto out;
 	}
+
+	fprintf(stdout, "Applying options: %s", context);
 
 	/* Mount tmpfs at /run for systemd */
 	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, context) == -1) {
@@ -213,8 +147,6 @@ int prestart(const char *rootfs, const char *id, int pid)
 
 	ret = 0;
 out:
-	if (mount_context)
-		free(mount_context);
 	if (fd > -1)
 		close(fd);
 	if (fp)
@@ -258,32 +190,35 @@ int poststop(const char *roofs, const char *id, int pid)
 int main(int argc, char *argv[])
 {
 
-	if (argc < 2) {
+	if (argc < 3) {
 		fprintf(stderr, "Expect atleast 2 arguments");
 		exit(1);
 	}
 
 	size_t rd;
 	yajl_val node;
+	yajl_val config_node;
 	char errbuf[BUFLEN];
-	char fileData[CONFIGSZ];
+	char stateData[CONFIGSZ];
+	char configData[CONFIGSZ];
 	int ret = -1;
+	FILE *fp = NULL;
 
-	fileData[0] = 0;
+	stateData[0] = 0;
 	errbuf[0] = 0;
 
 	/* Read the entire config file from stdin */
-	rd = fread((void *)fileData, 1, sizeof(fileData) - 1, stdin);
+	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
 	if (rd == 0 && !feof(stdin)) {
 		fprintf(stderr, "error encountered on file read\n");
 		return 1;
-	} else if (rd >= sizeof(fileData) - 1) {
+	} else if (rd >= sizeof(stateData) - 1) {
 		fprintf(stderr, "config file too big\n");
 		return 1;
 	}
 
-	/* Parse the config */
-	node = yajl_tree_parse((const char *)fileData, errbuf, sizeof(errbuf));
+	/* Parse the state */
+	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
 		fprintf(stderr, "parse_error: ");
 		if (strlen(errbuf)) {
@@ -320,9 +255,46 @@ int main(int argc, char *argv[])
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
+	/* Parse the config file */
+	fp = fopen(argv[2], "r");
+	if (fp == NULL) {
+		fprintf(stderr, "Failed to open config file: %s\n", argv[2]);
+		goto out;
+	}
+	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
+	if (rd == 0 && !feof(fp)) {
+		fprintf(stderr, "error encountered on file read\n");
+		goto out;
+	} else if (rd >= sizeof(configData) - 1) {
+		fprintf(stderr, "config file too big\n");
+		goto out;
+	}
+
+	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
+	if (config_node == NULL) {
+		fprintf(stderr, "parse_error: ");
+		if (strlen(errbuf)) {
+			fprintf(stderr, " %s", errbuf);
+		} else {
+			fprintf(stderr, "unknown error");
+		}
+		fprintf(stderr, "\n");
+		goto out;
+	}
+
+	/* Extract values from the config json */
+	const char *mount_label_path[] = { "MountLabel", (const char *)0 };
+	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
+	if (!v_mount) {
+		fprintf(stderr, "MountLabel not found in config\n");
+		goto out;
+	}
+	char *mount_label = YAJL_GET_STRING(v_mount);
+
+	fprintf(stdout, "Mount Label parsed as: %s", mount_label);
 
 	if (!strncmp("prestart", argv[1], sizeof("prestart"))) {
-		if (prestart(rootfs, id, target_pid) != 0) {
+		if (prestart(rootfs, id, target_pid, mount_label) != 0) {
 			goto out;
 		}
 	} else if (!strncmp("poststop", argv[1], sizeof("poststop"))) {
@@ -337,5 +309,9 @@ int main(int argc, char *argv[])
 	ret = 0;
 out:
 	yajl_tree_free(node);
+	if (fp)
+		fclose(fp);
+	if (config_node)
+		yajl_tree_free(config_node);
 	return ret;
 }
