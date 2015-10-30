@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <linux/limits.h>
+#include <selinux/selinux.h>
+#include <selinux/context.h>
 
 #include "yajl/yajl_tree.h"
 
@@ -18,26 +20,100 @@
 #define BUFLEN 1024
 #define CONFIGSZ 65536
 
+static char *get_file_context(const char *filename) {
+	FILE *file = fopen(filename, "r");
+	char line [1000];
+	char key [1000];
+	char value [1000];
+
+	if (file != NULL) {
+		while(fgets(line, sizeof(line), file)!= NULL) /* read a line from a file */ {
+		sscanf(line, "%[^= ] = \"%[^\n\"]\"", key, value);
+		if (strcmp(key,"file") == 0) {
+			fclose(file);
+			return strdup(value);
+		}
+		}
+
+		fclose(file);
+	}
+	else {
+		perror(filename); //print the error message on stderr.
+	}
+
+	return NULL;
+}
+
+char *generate_mount_context(int pid) {
+	security_context_t scon, tcon;
+	char *mountcon;
+
+	if (is_selinux_enabled() > 0) {
+		context_t con, con1;
+		const char *level;
+		int i = getpidcon(pid, &scon);
+		if (i < 0) {
+			perror("Failed to pidcon");
+			return NULL;
+		}
+		con = context_new(scon);
+		level = context_range_get(con);
+		tcon = get_file_context(selinux_lxc_contexts_path());
+		if (tcon == NULL) {
+			perror("Failed to get lxc_context");
+			return NULL;
+		}
+		con1 = context_new(tcon);
+		context_range_set(con1, level);
+		i = asprintf(&mountcon, "context=\"%s\"", context_str(con1));
+		if (i < 0) {
+			perror("Failed to allocate memory");
+			return NULL;
+		}
+		context_free(con);
+		context_free(con1);
+		freecon(scon);
+		freecon(tcon);
+		return mountcon;
+	}
+	return NULL;
+}
+
 int prestart(const char *rootfs, const char *id, int pid)
 {
-	char process_mnt_ns_fd[BUFLEN];
-	snprintf(process_mnt_ns_fd, BUFLEN - 1, "/proc/%d/ns/mnt", pid);	
-	int fd = open(process_mnt_ns_fd, O_RDONLY);
-	if (-1 == fd) {
+	int ret = 1;
+	char *mount_context = NULL;
+	int mfd = -1;
+	int fd = -1;
+	int rc = -1;
+	FILE *fp = NULL;
+	char *context = NULL;
+
+	mount_context = generate_mount_context(pid);
+	if (mount_context == NULL) {
+		pr_perror("Failed to generate selinux context for /run");
+		goto out;
+	}
+
+	char process_mnt_ns_fd[PATH_MAX];
+	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
+
+	fd = open(process_mnt_ns_fd, O_RDONLY);
+	if (fd < 0) {
 		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
-		return 1;
+		goto out;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
 		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
-		return 1;
+		goto out;
 	}
 
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
 		pr_perror("Failed to chdir");
-		return 1;
+		goto out;
 	}
 
 	char run_dir[PATH_MAX];
@@ -47,14 +123,20 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(run_dir, 0755) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir");
-			return 1;
+			goto out;
 		}
 	}
-			
+
+	rc = asprintf(&context, "mode=755,size=65536k,%s", mount_context);
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for context");
+		goto out;
+	}
+
 	/* Mount tmpfs at /run for systemd */
-	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, "mode=755,size=65536k") == -1) {
+	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, context) == -1) {
 		pr_perror("Failed to mount tmpfs at /run");
-		return 1;
+		goto out;
 	}
 
 	char journal_dir[PATH_MAX];
@@ -64,21 +146,21 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(journal_dir, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir journal dir");
-			return 1;
+			goto out;
 		}
 	}
 
 	if (mkdir(cont_journal_dir, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir container journal dir");
-			return 1;
+			goto out;
 		}
 	}
 
 	/* Mount journal directory at /var/log/journal in the container */
 	if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
 		pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
-		return 1;
+		goto out;
 	}
 
 	char tmp_id_path[PATH_MAX];
@@ -86,7 +168,7 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(tmp_id_path, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir tmp id dir");
-			return 1;
+			goto out;
 		}
 	}
 
@@ -95,41 +177,51 @@ int prestart(const char *rootfs, const char *id, int pid)
 	if (mkdir(etc_dir_path, 0666) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir etc dir");
-			return 1;
+			goto out;
 		}
 	}
 
 	char mid_path[PATH_MAX];
 	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
-	FILE *fp = fopen(mid_path, "w");
+	fp = fopen(mid_path, "w");
 	if (fp == NULL) {
 		fprintf(stderr, "Failed to open %s for writing\n", mid_path);
-		return 1;
+		goto out;
 	}
 
-	int rc;
 	rc = fprintf(fp, "%s", id);
 	if (rc < 0) {
 		fprintf(stderr, "Failed to write id to %s\n", mid_path);
-		return 1;
+		goto out;
 	}
-	fclose(fp);
 
 	char cont_mid_path[PATH_MAX];
 	snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
-	int mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
+	mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
 	if (mfd < 0) {
 		pr_perror("Failed to open: %s", cont_mid_path);
-		return 1;
+		goto out;
 	}
-	close(mfd);
 
 	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, NULL) == -1) {
 		pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
-		return 1;
+		goto out;
 	}
 
-	return 0;
+	ret = 0;
+out:
+	if (mount_context)
+		free(mount_context);
+	if (fd > 0)
+		close(fd);
+	if (fp)
+		fclose(fp);
+	if (mfd > 0)
+		close(mfd);
+	if (context)
+		free(context);
+
+	return ret;
 }
 
 int poststop(const char *roofs, const char *id, int pid)
