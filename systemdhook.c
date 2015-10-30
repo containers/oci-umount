@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <linux/limits.h>
+#include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
 
 #define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
@@ -129,6 +130,12 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	rc = fprintf(fp, "%s", id);
 	if (rc < 0) {
 		fprintf(stderr, "Failed to write id to %s\n", mid_path);
+		goto out;
+	}
+
+	rc = setfilecon(mid_path, mount_label);
+	if (rc < 0) {
+		pr_perror("Failed to set machine-id selinux context");
 		goto out;
 	}
 
