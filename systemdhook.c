@@ -86,7 +86,7 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 		}
 	}
 
-	if (!strcmp("", mount_label)) {
+	if (strcmp("", mount_label)) {
 		rc = setfilecon(journal_dir, mount_label);
 		if (rc < 0) {
 			pr_perror("Failed to set journal dir selinux context");
@@ -139,7 +139,7 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 		goto out;
 	}
 
-	if (!strcmp("", mount_label)) {
+	if (strcmp("", mount_label)) {
 		rc = fsetfilecon(fd, mount_label);
 		if (rc < 0) {
 			pr_perror("Failed to set machine-id selinux context");
