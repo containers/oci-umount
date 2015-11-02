@@ -41,7 +41,7 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
 		goto out;
 	}
-
+	close(fd); fd = -1;
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
 		pr_perror("Failed to chdir");
@@ -76,23 +76,25 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	}
 
 	char journal_dir[PATH_MAX];
-	snprintf(journal_dir, PATH_MAX, "/var/log/journal/%s", id);
+	snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
 	char cont_journal_dir[PATH_MAX];
 	snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
-	if (mkdir(journal_dir, 0666) == -1) {
+	if (mkdir(journal_dir, 0755) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir journal dir");
 			goto out;
 		}
 	}
 
-	rc = setfilecon(journal_dir, mount_label);
-	if (rc < 0) {
-		pr_perror("Failed to set journal dir selinux context");
-		goto out;
+	if (!strcmp("", mount_label)) {
+		rc = setfilecon(journal_dir, mount_label);
+		if (rc < 0) {
+			pr_perror("Failed to set journal dir selinux context");
+			goto out;
+		}
 	}
 
-	if (mkdir(cont_journal_dir, 0666) == -1) {
+	if (mkdir(cont_journal_dir, 0755) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir container journal dir");
 			goto out;
@@ -105,18 +107,18 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 		goto out;
 	}
 
-	char tmp_id_path[PATH_MAX];
-	snprintf(tmp_id_path, PATH_MAX, "/tmp/%s/", id);
-	if (mkdir(tmp_id_path, 0666) == -1) {
+	char run_id_path[PATH_MAX];
+	snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
+	if (mkdir(run_id_path, 0700) == -1) {
 		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir tmp id dir");
+			pr_perror("Failed to mkdir run id dir");
 			goto out;
 		}
 	}
 
 	char etc_dir_path[PATH_MAX];
-	snprintf(etc_dir_path, PATH_MAX, "/tmp/%s/etc", id);
-	if (mkdir(etc_dir_path, 0666) == -1) {
+	snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
+	if (mkdir(etc_dir_path, 0700) == -1) {
 		if (errno != EEXIST) {
 			pr_perror("Failed to mkdir etc dir");
 			goto out;
@@ -124,34 +126,36 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	}
 
 	char mid_path[PATH_MAX];
-	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
-	fp = fopen(mid_path, "w");
-	if (fp == NULL) {
+	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
+	fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
+	if (fd < 0) {
 		fprintf(stderr, "Failed to open %s for writing\n", mid_path);
 		goto out;
 	}
 
-	rc = fprintf(fp, "%s", id);
+	rc = dprintf(fd, "%.32s", id);
 	if (rc < 0) {
 		fprintf(stderr, "Failed to write id to %s\n", mid_path);
 		goto out;
 	}
 
-	rc = setfilecon(mid_path, mount_label);
-	if (rc < 0) {
-		pr_perror("Failed to set machine-id selinux context");
-		goto out;
+	if (!strcmp("", mount_label)) {
+		rc = fsetfilecon(fd, mount_label);
+		if (rc < 0) {
+			pr_perror("Failed to set machine-id selinux context");
+			goto out;
+		}
 	}
 
 	char cont_mid_path[PATH_MAX];
 	snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
-	mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0666);
+	mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0444);
 	if (mfd < 0) {
 		pr_perror("Failed to open: %s", cont_mid_path);
 		goto out;
 	}
 
-	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, NULL) == -1) {
+	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, "ro") == -1) {
 		pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
 		goto out;
 	}
@@ -160,8 +164,6 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 out:
 	if (fd > -1)
 		close(fd);
-	if (fp)
-		fclose(fp);
 	if (mfd > -1)
 		close(mfd);
 	if (options)
@@ -173,12 +175,12 @@ out:
 int poststop(const char *roofs, const char *id, int pid)
 {
 	int ret = 0;
-	char tmp_id_path[PATH_MAX];
-	snprintf(tmp_id_path, PATH_MAX, "/tmp/%s/", id);
+	char run_id_path[PATH_MAX];
+	snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
 	char etc_dir_path[PATH_MAX];
-	snprintf(etc_dir_path, PATH_MAX, "/tmp/%s/etc", id);
+	snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
 	char mid_path[PATH_MAX];
-	snprintf(mid_path, PATH_MAX, "/tmp/%s/etc/machine-id", id);
+	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
 
 	if (unlink(mid_path) != 0) {
 		pr_perror("Unable to remove %s", mid_path);
@@ -190,8 +192,8 @@ int poststop(const char *roofs, const char *id, int pid)
 		ret = 1;
 	}
 
-	if (rmdir(tmp_id_path) != 0) {
-		pr_perror("Unable to remove %s", tmp_id_path);
+	if (rmdir(run_id_path) != 0) {
+		pr_perror("Unable to remove %s", run_id_path);
 		ret = 1;
 	}
 
