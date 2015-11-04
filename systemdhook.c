@@ -306,11 +306,11 @@ int main(int argc, char *argv[])
 
 	fprintf(stdout, "Mount Label parsed as: %s", mount_label);
 
-	if (!strncmp("prestart", argv[1], sizeof("prestart"))) {
+	if (!strcmp("prestart", argv[1])) {
 		if (prestart(rootfs, id, target_pid, mount_label) != 0) {
 			goto out;
 		}
-	} else if (!strncmp("poststop", argv[1], sizeof("poststop"))) {
+	} else if (!strcmp("poststop", argv[1])) {
 		if (poststop(rootfs, id, target_pid) != 0) {
 			goto out;
 		}
