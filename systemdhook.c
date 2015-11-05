@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -18,7 +19,22 @@
 #define BUFLEN 1024
 #define CONFIGSZ 65536
 
-int prestart(const char *rootfs, const char *id, int pid, const char *mount_label)
+bool contains_mount(char **config_mounts, unsigned len, const char *mount) {
+	for (unsigned i = 0; i < len; i++) {
+		if (!strcmp(mount, config_mounts[i])) {
+			fprintf(stdout, "%s already present as a mount point in container configuration, skipping\n", mount);
+			return true;
+		}
+	}
+	return false;
+}
+
+int prestart(const char *rootfs,
+		const char *id,
+		int pid,
+		const char *mount_label,
+		char **config_mounts,
+		unsigned config_mounts_len)
 {
 	int ret = 1;
 	int mfd = -1;
@@ -52,112 +68,118 @@ int prestart(const char *rootfs, const char *id, int pid, const char *mount_labe
 	snprintf(run_dir, PATH_MAX, "%s/run", rootfs);
 
 	/* Create the /run directory */
-	if (mkdir(run_dir, 0755) == -1) {
-		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir");
-			goto out;
+	if (!contains_mount(config_mounts, config_mounts_len, "/run")) {
+		if (mkdir(run_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir");
+				goto out;
+			}
 		}
-	}
 
-	if (!strcmp("", mount_label)) {
-		rc = asprintf(&options, "mode=755,size=65536k");
-	} else {
-		rc = asprintf(&options, "mode=755,size=65536k,context=\"%s\"", mount_label);
-	}
-	if (rc < 0) {
-		pr_perror("Failed to allocate memory for context");
-		goto out;
-	}
-
-	/* Mount tmpfs at /run for systemd */
-	if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
-		pr_perror("Failed to mount tmpfs at /run");
-		goto out;
-	}
-
-	char journal_dir[PATH_MAX];
-	snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
-	char cont_journal_dir[PATH_MAX];
-	snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
-	if (mkdir(journal_dir, 0755) == -1) {
-		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir journal dir");
-			goto out;
+		if (!strcmp("", mount_label)) {
+			rc = asprintf(&options, "mode=755,size=65536k");
+		} else {
+			rc = asprintf(&options, "mode=755,size=65536k,context=\"%s\"", mount_label);
 		}
-	}
-
-	if (strcmp("", mount_label)) {
-		rc = setfilecon(journal_dir, mount_label);
 		if (rc < 0) {
-			pr_perror("Failed to set journal dir selinux context");
+			pr_perror("Failed to allocate memory for context");
+			goto out;
+		}
+
+		/* Mount tmpfs at /run for systemd */
+		if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
+			pr_perror("Failed to mount tmpfs at /run");
 			goto out;
 		}
 	}
 
-	if (mkdir(cont_journal_dir, 0755) == -1) {
-		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir container journal dir");
+	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
+		char journal_dir[PATH_MAX];
+		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
+		char cont_journal_dir[PATH_MAX];
+		snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
+		if (mkdir(journal_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir journal dir");
+				goto out;
+			}
+		}
+
+		if (strcmp("", mount_label)) {
+			rc = setfilecon(journal_dir, mount_label);
+			if (rc < 0) {
+				pr_perror("Failed to set journal dir selinux context");
+				goto out;
+			}
+		}
+
+		if (mkdir(cont_journal_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir container journal dir");
+				goto out;
+			}
+		}
+
+		/* Mount journal directory at /var/log/journal in the container */
+		if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
+			pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
 			goto out;
 		}
 	}
 
-	/* Mount journal directory at /var/log/journal in the container */
-	if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
-		pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
-		goto out;
-	}
+	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
+		char run_id_path[PATH_MAX];
+		snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
+		if (mkdir(run_id_path, 0700) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir run id dir");
+				goto out;
+			}
+		}
 
-	char run_id_path[PATH_MAX];
-	snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
-	if (mkdir(run_id_path, 0700) == -1) {
-		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir run id dir");
+		char etc_dir_path[PATH_MAX];
+		snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
+		if (mkdir(etc_dir_path, 0700) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir etc dir");
+				goto out;
+			}
+		}
+
+		char mid_path[PATH_MAX];
+		snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
+		fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
+		if (fd < 0) {
+			fprintf(stderr, "Failed to open %s for writing\n", mid_path);
 			goto out;
 		}
-	}
 
-	char etc_dir_path[PATH_MAX];
-	snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
-	if (mkdir(etc_dir_path, 0700) == -1) {
-		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir etc dir");
-			goto out;
-		}
-	}
-
-	char mid_path[PATH_MAX];
-	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
-	fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
-	if (fd < 0) {
-		fprintf(stderr, "Failed to open %s for writing\n", mid_path);
-		goto out;
-	}
-
-	rc = dprintf(fd, "%.32s", id);
-	if (rc < 0) {
-		fprintf(stderr, "Failed to write id to %s\n", mid_path);
-		goto out;
-	}
-
-	if (strcmp("", mount_label)) {
-		rc = fsetfilecon(fd, mount_label);
+		rc = dprintf(fd, "%.32s", id);
 		if (rc < 0) {
-			pr_perror("Failed to set machine-id selinux context");
+			fprintf(stderr, "Failed to write id to %s\n", mid_path);
 			goto out;
 		}
-	}
 
-	char cont_mid_path[PATH_MAX];
-	snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
-	mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0444);
-	if (mfd < 0) {
-		pr_perror("Failed to open: %s", cont_mid_path);
-		goto out;
-	}
+		if (strcmp("", mount_label)) {
+			rc = fsetfilecon(fd, mount_label);
+			if (rc < 0) {
+				pr_perror("Failed to set machine-id selinux context");
+				goto out;
+			}
+		}
 
-	if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, "ro") == -1) {
-		pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
-		goto out;
+		char cont_mid_path[PATH_MAX];
+		snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
+		mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0444);
+		if (mfd < 0) {
+			pr_perror("Failed to open: %s", cont_mid_path);
+			goto out;
+		}
+
+		if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, "ro") == -1) {
+			pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
+			goto out;
+		}
 	}
 
 	ret = 0;
@@ -172,8 +194,16 @@ out:
 	return ret;
 }
 
-int poststop(const char *roofs, const char *id, int pid)
+int poststop(const char *rootfs,
+		const char *id,
+		int pid,
+		char **config_mounts,
+		unsigned config_mounts_len)
 {
+	if (contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
+		return 0;
+	}
+
 	int ret = 0;
 	char run_id_path[PATH_MAX];
 	snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
@@ -304,14 +334,24 @@ int main(int argc, char *argv[])
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
-	fprintf(stdout, "Mount Label parsed as: %s", mount_label);
+	fprintf(stdout, "Mount Label parsed as: %s\n", mount_label);
 
+	/* Extract values from the config json */
+	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
+	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
+	if (!v_mps) {
+		fprintf(stderr, "MountPoints not found in config\n");
+		goto out;
+	}
+
+	char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
+	unsigned config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
 	if (!strcmp("prestart", argv[1])) {
-		if (prestart(rootfs, id, target_pid, mount_label) != 0) {
+		if (prestart(rootfs, id, target_pid, mount_label, config_mounts, config_mounts_len) != 0) {
 			goto out;
 		}
 	} else if (!strcmp("poststop", argv[1])) {
-		if (poststop(rootfs, id, target_pid) != 0) {
+		if (poststop(rootfs, id, target_pid, config_mounts, config_mounts_len) != 0) {
 			goto out;
 		}
 	} else {
