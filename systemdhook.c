@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <libgen.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -19,6 +20,21 @@
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
+
+static int makepath(char *dir, mode_t mode)
+{
+    if (!dir) {
+        errno = EINVAL;
+        return 1;
+    }
+
+    if (strlen(dir) == 1 && dir[0] == '/')
+        return 0;
+
+    makepath(dirname(strdupa(dir)), mode);
+
+    return mkdir(dir, mode);
+}
 
 bool contains_mount(char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
@@ -158,6 +174,25 @@ int prestart(const char *rootfs,
 		}
 	}
 
+#if 0
+	if (!contains_mount(config_mounts, config_mounts_len, "/sys/fs/cgroup")) {
+		char cont_cgroup_dir[PATH_MAX];
+		snprintf(cont_cgroup_dir, PATH_MAX, "%s/sys/fs/cgroup", rootfs);
+
+		if (makepath(cont_cgroup_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir container cgroup dir");
+				goto out;
+			}
+		}
+
+		/* Mount cgroup directory at /sys/fs/cgroup in the container */
+		if (mount("/sys/fs/cgroup", cont_cgroup_dir, "bind", MS_BIND|MS_REC, "ro") == -1) {
+			pr_perror("Failed to mount /sys/fs/cgroup at %s", cont_cgroup_dir);
+			goto out;
+		}
+	}
+#endif
 	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
 		char run_id_path[PATH_MAX];
 		snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
