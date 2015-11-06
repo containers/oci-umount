@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <syslog.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -14,7 +15,7 @@
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
 
-#define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
+#define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
@@ -89,6 +90,36 @@ int prestart(const char *rootfs,
 		/* Mount tmpfs at /run for systemd */
 		if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
 			pr_perror("Failed to mount tmpfs at /run");
+			goto out;
+		}
+	}
+
+
+	char tmp_dir[PATH_MAX];
+	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
+
+	/* Create the /tmp directory */
+	if (!contains_mount(config_mounts, config_mounts_len, "/tmp")) {
+		if (mkdir(tmp_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir");
+				goto out;
+			}
+		}
+
+		if (!strcmp("", mount_label)) {
+			rc = asprintf(&options, "mode=1777,size=65536k");
+		} else {
+			rc = asprintf(&options, "mode=1777,size=65536k,context=\"%s\"", mount_label);
+		}
+		if (rc < 0) {
+			pr_perror("Failed to allocate memory for context");
+			goto out;
+		}
+
+		/* Mount tmpfs at /tmp for systemd */
+		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
+			pr_perror("Failed to mount tmpfs at /tmp");
 			goto out;
 		}
 	}
@@ -212,17 +243,17 @@ int poststop(const char *rootfs,
 	char mid_path[PATH_MAX];
 	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
 
-	if (unlink(mid_path) != 0) {
+	if (unlink(mid_path) != 0 && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", mid_path);
 		ret = 1;
 	}
 
-	if (rmdir(etc_dir_path) != 0) {
+	if ((rmdir(etc_dir_path) != 0) && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", etc_dir_path);
 		ret = 1;
 	}
 
-	if (rmdir(run_id_path) != 0) {
+	if ((rmdir(run_id_path) != 0)  && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", run_id_path);
 		ret = 1;
 	}
