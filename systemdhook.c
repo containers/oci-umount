@@ -1,9 +1,11 @@
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <libgen.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <syslog.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -14,10 +16,25 @@
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
 
-#define pr_perror(fmt, ...) fprintf(stderr, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
+#define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
+
+static int makepath(char *dir, mode_t mode)
+{
+    if (!dir) {
+        errno = EINVAL;
+        return 1;
+    }
+
+    if (strlen(dir) == 1 && dir[0] == '/')
+        return 0;
+
+    makepath(dirname(strdupa(dir)), mode);
+
+    return mkdir(dir, mode);
+}
 
 bool contains_mount(char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
@@ -93,6 +110,36 @@ int prestart(const char *rootfs,
 		}
 	}
 
+
+	char tmp_dir[PATH_MAX];
+	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
+
+	/* Create the /tmp directory */
+	if (!contains_mount(config_mounts, config_mounts_len, "/tmp")) {
+		if (mkdir(tmp_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir");
+				goto out;
+			}
+		}
+
+		if (!strcmp("", mount_label)) {
+			rc = asprintf(&options, "mode=1777,size=65536k");
+		} else {
+			rc = asprintf(&options, "mode=1777,size=65536k,context=\"%s\"", mount_label);
+		}
+		if (rc < 0) {
+			pr_perror("Failed to allocate memory for context");
+			goto out;
+		}
+
+		/* Mount tmpfs at /tmp for systemd */
+		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
+			pr_perror("Failed to mount tmpfs at /tmp");
+			goto out;
+		}
+	}
+
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
@@ -127,6 +174,25 @@ int prestart(const char *rootfs,
 		}
 	}
 
+#if 0
+	if (!contains_mount(config_mounts, config_mounts_len, "/sys/fs/cgroup")) {
+		char cont_cgroup_dir[PATH_MAX];
+		snprintf(cont_cgroup_dir, PATH_MAX, "%s/sys/fs/cgroup", rootfs);
+
+		if (makepath(cont_cgroup_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir container cgroup dir");
+				goto out;
+			}
+		}
+
+		/* Mount cgroup directory at /sys/fs/cgroup in the container */
+		if (mount("/sys/fs/cgroup", cont_cgroup_dir, "bind", MS_BIND|MS_REC, "ro") == -1) {
+			pr_perror("Failed to mount /sys/fs/cgroup at %s", cont_cgroup_dir);
+			goto out;
+		}
+	}
+#endif
 	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
 		char run_id_path[PATH_MAX];
 		snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
@@ -212,17 +278,17 @@ int poststop(const char *rootfs,
 	char mid_path[PATH_MAX];
 	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
 
-	if (unlink(mid_path) != 0) {
+	if (unlink(mid_path) != 0 && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", mid_path);
 		ret = 1;
 	}
 
-	if (rmdir(etc_dir_path) != 0) {
+	if ((rmdir(etc_dir_path) != 0) && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", etc_dir_path);
 		ret = 1;
 	}
 
-	if (rmdir(run_id_path) != 0) {
+	if ((rmdir(run_id_path) != 0)  && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", run_id_path);
 		ret = 1;
 	}
