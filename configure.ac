@@ -1,5 +1,6 @@
 AC_INIT([OCI Systemd Hook], 0.1)
 AC_CONFIG_AUX_DIR([build-aux])
+AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
 AC_PROG_CC
 
