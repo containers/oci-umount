@@ -144,8 +144,8 @@ int prestart(const char *rootfs,
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
 		char cont_journal_dir[PATH_MAX];
-		snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
-		if (mkdir(journal_dir, 0755) == -1) {
+		snprintf(cont_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
+		if (makepath(journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir journal dir");
 				goto out;
@@ -160,14 +160,14 @@ int prestart(const char *rootfs,
 			}
 		}
 
-		if (mkdir(cont_journal_dir, 0755) == -1) {
+		if (makepath(cont_journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir container journal dir");
 				goto out;
 			}
 		}
 
-		/* Mount journal directory at /var/log/journal in the container */
+		/* Mount journal directory at /var/log/journal/UUID in the container */
 		if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
 			pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
 			goto out;
