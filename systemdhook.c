@@ -24,12 +24,12 @@
 static int makepath(char *dir, mode_t mode)
 {
     if (!dir) {
-        errno = EINVAL;
-        return 1;
+	errno = EINVAL;
+	return 1;
     }
 
     if (strlen(dir) == 1 && dir[0] == '/')
-        return 0;
+	return 0;
 
     makepath(dirname(strdupa(dir)), mode);
 
@@ -216,13 +216,13 @@ int prestart(const char *rootfs,
 		snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
 		fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
 		if (fd < 0) {
-			fprintf(stderr, "Failed to open %s for writing\n", mid_path);
+			pr_perror("Failed to open %s for writing\n", mid_path);
 			goto out;
 		}
 
 		rc = dprintf(fd, "%.32s", id);
 		if (rc < 0) {
-			fprintf(stderr, "Failed to write id to %s\n", mid_path);
+			pr_perror("Failed to write id to %s\n", mid_path);
 			goto out;
 		}
 
@@ -300,7 +300,7 @@ int main(int argc, char *argv[])
 {
 
 	if (argc < 3) {
-		fprintf(stderr, "Expect atleast 2 arguments");
+		pr_perror("Expect atleast 2 arguments");
 		exit(1);
 	}
 
@@ -319,23 +319,23 @@ int main(int argc, char *argv[])
 	/* Read the entire config file from stdin */
 	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
 	if (rd == 0 && !feof(stdin)) {
-		fprintf(stderr, "error encountered on file read\n");
+		pr_perror("error encountered on file read\n");
 		return 1;
 	} else if (rd >= sizeof(stateData) - 1) {
-		fprintf(stderr, "config file too big\n");
+		pr_perror("config file too big\n");
 		return 1;
 	}
 
 	/* Parse the state */
 	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
-		fprintf(stderr, "parse_error: ");
+		pr_perror("parse_error: ");
 		if (strlen(errbuf)) {
-		       	fprintf(stderr, " %s", errbuf);
+			pr_perror(" %s", errbuf);
 		} else {
-			fprintf(stderr, "unknown error");
+			pr_perror("unknown error");
 		}
-		fprintf(stderr, "\n");
+		pr_perror("\n");
 		return 1;
 	}
 
@@ -343,7 +343,7 @@ int main(int argc, char *argv[])
 	const char *root_path[] = { "root", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
 	if (!v_root) {
-		fprintf(stderr, "root not found in state\n");
+		pr_perror("root not found in state\n");
 		goto out;
 	}
 	char *rootfs = YAJL_GET_STRING(v_root);
@@ -351,7 +351,7 @@ int main(int argc, char *argv[])
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
-		fprintf(stderr, "pid not found in state\n");
+		pr_perror("pid not found in state\n");
 		goto out;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
@@ -359,7 +359,7 @@ int main(int argc, char *argv[])
 	const char *id_path[] = { "id", (const char *)0 };
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
 	if (!v_id) {
-		fprintf(stderr, "id not found in state\n");
+		pr_perror("id not found in state\n");
 		goto out;
 	}
 	char *id = YAJL_GET_STRING(v_id);
@@ -367,27 +367,27 @@ int main(int argc, char *argv[])
 	/* Parse the config file */
 	fp = fopen(argv[2], "r");
 	if (fp == NULL) {
-		fprintf(stderr, "Failed to open config file: %s\n", argv[2]);
+		pr_perror("Failed to open config file: %s\n", argv[2]);
 		goto out;
 	}
 	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
 	if (rd == 0 && !feof(fp)) {
-		fprintf(stderr, "error encountered on file read\n");
+		pr_perror("error encountered on file read\n");
 		goto out;
 	} else if (rd >= sizeof(configData) - 1) {
-		fprintf(stderr, "config file too big\n");
+		pr_perror("config file too big\n");
 		goto out;
 	}
 
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
-		fprintf(stderr, "parse_error: ");
+		pr_perror("parse_error: ");
 		if (strlen(errbuf)) {
-			fprintf(stderr, " %s", errbuf);
+			pr_perror(" %s", errbuf);
 		} else {
-			fprintf(stderr, "unknown error");
+			pr_perror("unknown error");
 		}
-		fprintf(stderr, "\n");
+		pr_perror("\n");
 		goto out;
 	}
 
@@ -395,7 +395,7 @@ int main(int argc, char *argv[])
 	const char *mount_label_path[] = { "MountLabel", (const char *)0 };
 	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
 	if (!v_mount) {
-		fprintf(stderr, "MountLabel not found in config\n");
+		pr_perror("MountLabel not found in config\n");
 		goto out;
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
@@ -406,7 +406,7 @@ int main(int argc, char *argv[])
 	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
 	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
 	if (!v_mps) {
-		fprintf(stderr, "MountPoints not found in config\n");
+		pr_perror("MountPoints not found in config\n");
 		goto out;
 	}
 
@@ -421,7 +421,7 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 	} else {
-		fprintf(stderr, "command not recognized: %s\n", argv[1]);
+		pr_perror("command not recognized: %s\n", argv[1]);
 		goto out;
 	}
 
