@@ -230,25 +230,11 @@ int poststop(const char *rootfs,
 	}
 
 	int ret = 0;
-	char run_id_path[PATH_MAX];
-	snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
-	char etc_dir_path[PATH_MAX];
-	snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
 	char mid_path[PATH_MAX];
-	snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
+	snprintf(mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
 
 	if (unlink(mid_path) != 0 && (errno != ENOENT)) {
 		pr_perror("Unable to remove %s", mid_path);
-		ret = 1;
-	}
-
-	if ((rmdir(etc_dir_path) != 0) && (errno != ENOENT)) {
-		pr_perror("Unable to remove %s", etc_dir_path);
-		ret = 1;
-	}
-
-	if ((rmdir(run_id_path) != 0)  && (errno != ENOENT)) {
-		pr_perror("Unable to remove %s", run_id_path);
 		ret = 1;
 	}
 
