@@ -194,56 +194,17 @@ int prestart(const char *rootfs,
 	}
 #endif
 	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
-		char run_id_path[PATH_MAX];
-		snprintf(run_id_path, PATH_MAX, "/run/%s/", id);
-		if (mkdir(run_id_path, 0700) == -1) {
-			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir run id dir");
-				goto out;
-			}
-		}
-
-		char etc_dir_path[PATH_MAX];
-		snprintf(etc_dir_path, PATH_MAX, "/run/%s/etc", id);
-		if (mkdir(etc_dir_path, 0700) == -1) {
-			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir etc dir");
-				goto out;
-			}
-		}
-
 		char mid_path[PATH_MAX];
-		snprintf(mid_path, PATH_MAX, "/run/%s/etc/machine-id", id);
+		snprintf(mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
 		fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
 		if (fd < 0) {
 			pr_perror("Failed to open %s for writing\n", mid_path);
 			goto out;
 		}
 
-		rc = dprintf(fd, "%.32s", id);
+		rc = dprintf(fd, "%.32s\n", id);
 		if (rc < 0) {
 			pr_perror("Failed to write id to %s\n", mid_path);
-			goto out;
-		}
-
-		if (strcmp("", mount_label)) {
-			rc = fsetfilecon(fd, mount_label);
-			if (rc < 0) {
-				pr_perror("Failed to set machine-id selinux context");
-				goto out;
-			}
-		}
-
-		char cont_mid_path[PATH_MAX];
-		snprintf(cont_mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
-		mfd = open(cont_mid_path, O_CREAT|O_WRONLY, 0444);
-		if (mfd < 0) {
-			pr_perror("Failed to open: %s", cont_mid_path);
-			goto out;
-		}
-
-		if (mount(mid_path, cont_mid_path, "bind", MS_BIND|MS_REC, "ro") == -1) {
-			pr_perror("Failed to mount %s at %s", mid_path, cont_mid_path);
 			goto out;
 		}
 	}
@@ -252,8 +213,6 @@ int prestart(const char *rootfs,
 out:
 	if (fd > -1)
 		close(fd);
-	if (mfd > -1)
-		close(mfd);
 	if (options)
 		free(options);
 
