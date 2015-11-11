@@ -16,6 +16,20 @@
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
 
+#define _cleanup_(x) __attribute__((cleanup(x)))
+
+static inline void freep(void *p) {
+        free(*(void**) p);
+}
+
+#define _cleanup_free_ _cleanup_(freep)
+
+#define DEFINE_CLEANUP_FUNC(type, func)                         \
+        static inline void func##p(type *p) {                   \
+                if (*p)                                         \
+                        func(*p);                               \
+        }                                                       \
+
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
