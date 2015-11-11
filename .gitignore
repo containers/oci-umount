@@ -1,2 +1,15 @@
-systemdhook
+Makefile.in
+Makefile
+aclocal.m4
+autom4te.cache/
+config.log
+config.status
+configure
+oci_systemd_hook
+.deps/
 systemdhook.o
+oci_systemd_hook-systemdhook.o
+build-aux/
+config.h
+config.h.in
+stamp-*
