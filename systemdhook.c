@@ -23,7 +23,7 @@ static inline void freep(void *p) {
 }
 
 static inline void closep(int *fd) {
-	if (*fd > 0)
+	if (*fd >= 0)
 		close(*fd);
 	*fd = -1;
 }
@@ -81,32 +81,32 @@ int prestart(const char *rootfs,
 		char **config_mounts,
 		unsigned config_mounts_len)
 {
-	int ret = 1;
-	int mfd = -1;
-	int fd = -1;
-	int rc = -1;
-	FILE *fp = NULL;
-	char *options = NULL;
+	_cleanup_close_  int fd = -1;
+	_cleanup_fclose_ FILE *fp = NULL;
+	_cleanup_free_   char *options = NULL;
 
+	int rc = -1;
 	char process_mnt_ns_fd[PATH_MAX];
 	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
 
 	fd = open(process_mnt_ns_fd, O_RDONLY);
 	if (fd < 0) {
 		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
-		goto out;
+		return -1;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
 		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
-		goto out;
+		return -1;
 	}
-	close(fd); fd = -1;
+	close(fd);
+	fd = -1;
+
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
 		pr_perror("Failed to chdir");
-		goto out;
+		return -1;
 	}
 
 	char run_dir[PATH_MAX];
@@ -117,7 +117,7 @@ int prestart(const char *rootfs,
 		if (mkdir(run_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir");
-				goto out;
+				return -1;
 			}
 		}
 
@@ -128,13 +128,13 @@ int prestart(const char *rootfs,
 		}
 		if (rc < 0) {
 			pr_perror("Failed to allocate memory for context");
-			goto out;
+			return -1;
 		}
 
 		/* Mount tmpfs at /run for systemd */
 		if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
 			pr_perror("Failed to mount tmpfs at /run");
-			goto out;
+			return -1;
 		}
 	}
 
@@ -147,7 +147,7 @@ int prestart(const char *rootfs,
 		if (mkdir(tmp_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir");
-				goto out;
+				return -1;
 			}
 		}
 
@@ -158,13 +158,13 @@ int prestart(const char *rootfs,
 		}
 		if (rc < 0) {
 			pr_perror("Failed to allocate memory for context");
-			goto out;
+			return -1;
 		}
 
 		/* Mount tmpfs at /tmp for systemd */
 		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
 			pr_perror("Failed to mount tmpfs at /tmp");
-			goto out;
+			return -1;
 		}
 	}
 
@@ -176,7 +176,7 @@ int prestart(const char *rootfs,
 		if (makepath(journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir journal dir");
-				goto out;
+				return -1;
 			}
 		}
 
@@ -184,21 +184,21 @@ int prestart(const char *rootfs,
 			rc = setfilecon(journal_dir, mount_label);
 			if (rc < 0) {
 				pr_perror("Failed to set journal dir selinux context");
-				goto out;
+				return -1;
 			}
 		}
 
 		if (makepath(cont_journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir container journal dir");
-				goto out;
+				return -1;
 			}
 		}
 
 		/* Mount journal directory at /var/log/journal/UUID in the container */
 		if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
 			pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
-			goto out;
+			return -1;
 		}
 	}
 
@@ -227,24 +227,17 @@ int prestart(const char *rootfs,
 		fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
 		if (fd < 0) {
 			pr_perror("Failed to open %s for writing\n", mid_path);
-			goto out;
+			return -1;
 		}
 
 		rc = dprintf(fd, "%.32s\n", id);
 		if (rc < 0) {
 			pr_perror("Failed to write id to %s\n", mid_path);
-			goto out;
+			return -1;
 		}
 	}
 
-	ret = 0;
-out:
-	if (fd > -1)
-		close(fd);
-	if (options)
-		free(options);
-
-	return ret;
+	return 0;
 }
 
 int poststop(const char *rootfs,
