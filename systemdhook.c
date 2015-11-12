@@ -44,6 +44,8 @@ static inline void fclosep(FILE **fp) {
                         func(*p);                               \
         }                                                       \
 
+DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
+
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
@@ -82,7 +84,6 @@ int prestart(const char *rootfs,
 		unsigned config_mounts_len)
 {
 	_cleanup_close_  int fd = -1;
-	_cleanup_fclose_ FILE *fp = NULL;
 	_cleanup_free_   char *options = NULL;
 
 	int rc = -1;
@@ -271,13 +272,13 @@ int main(int argc, char *argv[])
 	}
 
 	size_t rd;
-	yajl_val node;
-	yajl_val config_node;
+	_cleanup_(yajl_tree_freep) yajl_val node = NULL;
+	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
 	char errbuf[BUFLEN];
 	char stateData[CONFIGSZ];
 	char configData[CONFIGSZ];
 	int ret = -1;
-	FILE *fp = NULL;
+	_cleanup_fclose_ FILE *fp = NULL;
 
 	stateData[0] = 0;
 	errbuf[0] = 0;
@@ -310,7 +311,7 @@ int main(int argc, char *argv[])
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
 	if (!v_root) {
 		pr_perror("root not found in state\n");
-		goto out;
+		return 1;
 	}
 	char *rootfs = YAJL_GET_STRING(v_root);
 
@@ -318,7 +319,7 @@ int main(int argc, char *argv[])
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
 		pr_perror("pid not found in state\n");
-		goto out;
+		return 1;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
 
@@ -326,7 +327,7 @@ int main(int argc, char *argv[])
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
 	if (!v_id) {
 		pr_perror("id not found in state\n");
-		goto out;
+		return 1;
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
@@ -334,15 +335,15 @@ int main(int argc, char *argv[])
 	fp = fopen(argv[2], "r");
 	if (fp == NULL) {
 		pr_perror("Failed to open config file: %s\n", argv[2]);
-		goto out;
+		return 1;
 	}
 	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
 	if (rd == 0 && !feof(fp)) {
 		pr_perror("error encountered on file read\n");
-		goto out;
+		return 1;
 	} else if (rd >= sizeof(configData) - 1) {
 		pr_perror("config file too big\n");
-		goto out;
+		return 1;
 	}
 
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
@@ -354,7 +355,7 @@ int main(int argc, char *argv[])
 			pr_perror("unknown error");
 		}
 		pr_perror("\n");
-		goto out;
+		return 1;
 	}
 
 	/* Extract values from the config json */
@@ -362,7 +363,7 @@ int main(int argc, char *argv[])
 	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
 	if (!v_mount) {
 		pr_perror("MountLabel not found in config\n");
-		goto out;
+		return 1;
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
@@ -373,30 +374,23 @@ int main(int argc, char *argv[])
 	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
 	if (!v_mps) {
 		pr_perror("MountPoints not found in config\n");
-		goto out;
+		return 1;
 	}
 
 	char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
 	unsigned config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
 	if (!strcmp("prestart", argv[1])) {
 		if (prestart(rootfs, id, target_pid, mount_label, config_mounts, config_mounts_len) != 0) {
-			goto out;
+			return 1;
 		}
 	} else if (!strcmp("poststop", argv[1])) {
 		if (poststop(rootfs, id, target_pid, config_mounts, config_mounts_len) != 0) {
-			goto out;
+			return 1;
 		}
 	} else {
 		pr_perror("command not recognized: %s\n", argv[1]);
-		goto out;
+		return 1;
 	}
 
-	ret = 0;
-out:
-	yajl_tree_free(node);
-	if (fp)
-		fclose(fp);
-	if (config_node)
-		yajl_tree_free(config_node);
-	return ret;
+	return 0;
 }
