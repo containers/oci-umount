@@ -22,7 +22,21 @@ static inline void freep(void *p) {
         free(*(void**) p);
 }
 
+static inline void closep(int *fd) {
+	if (*fd > 0)
+		close(*fd);
+	*fd = -1;
+}
+
+static inline void fclosep(FILE **fp) {
+	if (*fp)
+		fclose(*fp);
+	*fp = NULL;
+}
+
 #define _cleanup_free_ _cleanup_(freep)
+#define _cleanup_close_ _cleanup_(closep)
+#define _cleanup_fclose_ _cleanup_(fclosep)
 
 #define DEFINE_CLEANUP_FUNC(type, func)                         \
         static inline void func##p(type *p) {                   \
