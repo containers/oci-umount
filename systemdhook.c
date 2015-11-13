@@ -55,7 +55,7 @@ static int makepath(char *dir, mode_t mode)
 {
     if (!dir) {
 	errno = EINVAL;
-	return 1;
+	return -1;
     }
 
     if (strlen(dir) == 1 && dir[0] == '/')
@@ -287,10 +287,10 @@ int main(int argc, char *argv[])
 	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
 	if (rd == 0 && !feof(stdin)) {
 		pr_perror("error encountered on file read\n");
-		return 1;
+		return EXIT_FAILURE;
 	} else if (rd >= sizeof(stateData) - 1) {
 		pr_perror("config file too big\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 
 	/* Parse the state */
@@ -303,7 +303,7 @@ int main(int argc, char *argv[])
 			pr_perror("unknown error");
 		}
 		pr_perror("\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 
 	/* Extract values from the state json */
@@ -311,7 +311,7 @@ int main(int argc, char *argv[])
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
 	if (!v_root) {
 		pr_perror("root not found in state\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 	char *rootfs = YAJL_GET_STRING(v_root);
 
@@ -319,7 +319,7 @@ int main(int argc, char *argv[])
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
 		pr_perror("pid not found in state\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
 
@@ -327,7 +327,7 @@ int main(int argc, char *argv[])
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
 	if (!v_id) {
 		pr_perror("id not found in state\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
@@ -335,15 +335,15 @@ int main(int argc, char *argv[])
 	fp = fopen(argv[2], "r");
 	if (fp == NULL) {
 		pr_perror("Failed to open config file: %s\n", argv[2]);
-		return 1;
+		return EXIT_FAILURE;
 	}
 	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
 	if (rd == 0 && !feof(fp)) {
 		pr_perror("error encountered on file read\n");
-		return 1;
+		return EXIT_FAILURE;
 	} else if (rd >= sizeof(configData) - 1) {
 		pr_perror("config file too big\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
@@ -355,7 +355,7 @@ int main(int argc, char *argv[])
 			pr_perror("unknown error");
 		}
 		pr_perror("\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 
 	/* Extract values from the config json */
@@ -363,7 +363,7 @@ int main(int argc, char *argv[])
 	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
 	if (!v_mount) {
 		pr_perror("MountLabel not found in config\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
@@ -374,23 +374,23 @@ int main(int argc, char *argv[])
 	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
 	if (!v_mps) {
 		pr_perror("MountPoints not found in config\n");
-		return 1;
+		return EXIT_FAILURE;
 	}
 
 	char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
 	unsigned config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
 	if (!strcmp("prestart", argv[1])) {
 		if (prestart(rootfs, id, target_pid, mount_label, config_mounts, config_mounts_len) != 0) {
-			return 1;
+			return EXIT_FAILURE;
 		}
 	} else if (!strcmp("poststop", argv[1])) {
 		if (poststop(rootfs, id, target_pid, config_mounts, config_mounts_len) != 0) {
-			return 1;
+			return EXIT_FAILURE;
 		}
 	} else {
 		pr_perror("command not recognized: %s\n", argv[1]);
-		return 1;
+		return EXIT_FAILURE;
 	}
 
-	return 0;
+	return EXIT_SUCCESS;
 }
