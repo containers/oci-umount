@@ -1,4 +1,14 @@
 # hooks
-Sample OCI hooks
+==============
+This repository contains hooks that are compatible with OCI runtimes.
 
-This repository contains sample hooks for OCI compatible container runtimes.
+Build
+==============
+```
+git clone https://github.com/mrunalp/hooks
+cd hooks
+autoreconf -i
+./configure
+make
+make install
+```
