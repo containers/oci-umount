@@ -1,4 +1,4 @@
-bin_PROGRAMS = oci_systemd_hook
+libexec_PROGRAMS = oci_systemd_hook
 oci_systemd_hook_SOURCES= systemdhook.c
 
 oci_systemd_hook_CFLAGS = $(YAJL_CFLAGS)
