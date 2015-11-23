@@ -1,7 +1,7 @@
 AC_INIT([OCI Systemd Hook], 0.1)
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
-AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+AM_INIT_AUTOMAKE([foreign -Wall -Werror subdir-objects])
 AC_PROG_CC
 
 PKG_CHECK_MODULES([YAJL], [yajl >= 2.0.0])
