@@ -5,3 +5,5 @@ oci_systemd_hook_CFLAGS = $(YAJL_CFLAGS)
 oci_systemd_hook_LDADD = $(YAJL_LIBS)
 oci_systemd_hook_CFLAGS += $(SELINUX_CFLAGS)
 oci_systemd_hook_LDADD += $(SELINUX_LIBS)
+
+dist_man_MANS = doc/oci_systemd_hook.1
