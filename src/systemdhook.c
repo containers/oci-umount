@@ -66,7 +66,7 @@ static int makepath(char *dir, mode_t mode)
     return mkdir(dir, mode);
 }
 
-bool contains_mount(char **config_mounts, unsigned len, const char *mount) {
+bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
 		if (!strcmp(mount, config_mounts[i])) {
 			fprintf(stdout, "%s already present as a mount point in container configuration, skipping\n", mount);
@@ -80,7 +80,7 @@ int prestart(const char *rootfs,
 		const char *id,
 		int pid,
 		const char *mount_label,
-		char **config_mounts,
+		const char **config_mounts,
 		unsigned config_mounts_len)
 {
 	_cleanup_close_  int fd = -1;
@@ -244,7 +244,7 @@ int prestart(const char *rootfs,
 int poststop(const char *rootfs,
 		const char *id,
 		int pid,
-		char **config_mounts,
+		const char **config_mounts,
 		unsigned config_mounts_len)
 {
 	if (contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
@@ -377,7 +377,7 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
+	const char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
 	unsigned config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
 	if (!strcmp("prestart", argv[1])) {
 		if (prestart(rootfs, id, target_pid, mount_label, config_mounts, config_mounts_len) != 0) {
