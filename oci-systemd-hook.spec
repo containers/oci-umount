@@ -1,24 +1,22 @@
-Name:           oci_systemd_hook
+Name:           oci-systemd-hook
 Version:        0.1.3
 Release:        1%{?dist}
 Summary:        OCI systemd hook for docker
 Group:          Applications/Text
 License:        GPLv3+
 URL:            https://github.com/mrunalp/hooks
-Source:         https://github.com/mrunalp/hooks/archive/v%{version}.tar.gz
+Source:         https://github.com/mrunalp/hooks/archive/%{name}-%{version}.tar.gz
 
 BuildRequires:  autoconf
 BuildRequires:  automake
 BuildRequires:  yajl-devel
 BuildRequires:  libselinux-devel
 
-Requires: docker
-
 %description
-OCI systemd hooks enable running systemd in a docker container.
+OCI systemd hooks enable running systemd in a OCI runc/docker container.
 
 %prep
-%setup -q -n hooks-%{version}
+%setup -q -n %{name}-%{version}
 
 %build
 autoreconf -i
@@ -34,9 +32,9 @@ make %{?_smp_mflags}
 %doc README.md LICENSE
 
 %changelog
-* Mon Nov 22 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.2
+* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.3
 - Fix bug in man page installation
-* Mon Nov 22 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.3
+* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.2
 - Add man pages
-* Mon Nov 22 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.2
+* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.1
 - Initial RPM release
