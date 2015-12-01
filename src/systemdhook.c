@@ -49,6 +49,7 @@ static inline void fclosep(FILE **fp) {
 DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
+#define pr_pinfo(fmt, ...) syslog(LOG_INFO, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
@@ -71,7 +72,7 @@ static int makepath(char *dir, mode_t mode)
 bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
 		if (!strcmp(mount, config_mounts[i])) {
-			fprintf(stdout, "%s already present as a mount point in container configuration, skipping\n", mount);
+			pr_pinfo("%s already present as a mount point in container configuration, skipping\n", mount);
 			return true;
 		}
 	}
@@ -371,7 +372,7 @@ int main(int argc, char *argv[])
 
 	char *cmd_file_name = basename(cmd);
 	if (strcmp("init", cmd_file_name) && strcmp("systemd", cmd_file_name)) {
-		fprintf(stdout, "Skipping as container command is %s, not init or systemd\n", cmd);
+		pr_pinfo("Skipping as container command is %s, not init or systemd\n", cmd);
 		return EXIT_SUCCESS;
 	}
 #endif
@@ -385,7 +386,7 @@ int main(int argc, char *argv[])
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
-	fprintf(stdout, "Mount Label parsed as: %s\n", mount_label);
+	pr_pinfo("Mount Label parsed as: %s\n", mount_label);
 
 	/* Extract values from the config json */
 	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
