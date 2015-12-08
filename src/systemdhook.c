@@ -49,7 +49,7 @@ static inline void fclosep(FILE **fp) {
 DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
-#define pr_pinfo(fmt, ...) syslog(LOG_INFO, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
+#define pr_pinfo(fmt, ...) syslog(LOG_INFO, "systemdhook: " fmt "\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
