@@ -230,13 +230,13 @@ int prestart(const char *rootfs,
 		snprintf(mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
 		fd = open(mid_path, O_CREAT|O_WRONLY, 0444);
 		if (fd < 0) {
-			pr_perror("Failed to open %s for writing\n", mid_path);
+			pr_perror("Failed to open %s for writing", mid_path);
 			return -1;
 		}
 
 		rc = dprintf(fd, "%.32s\n", id);
 		if (rc < 0) {
-			pr_perror("Failed to write id to %s\n", mid_path);
+			pr_perror("Failed to write id to %s", mid_path);
 			return -1;
 		}
 	}
@@ -289,10 +289,10 @@ int main(int argc, char *argv[])
 	/* Read the entire config file from stdin */
 	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
 	if (rd == 0 && !feof(stdin)) {
-		pr_perror("error encountered on file read\n");
+		pr_perror("Error encountered on file read");
 		return EXIT_FAILURE;
 	} else if (rd >= sizeof(stateData) - 1) {
-		pr_perror("config file too big\n");
+		pr_perror("Config file too big");
 		return EXIT_FAILURE;
 	}
 
@@ -305,7 +305,6 @@ int main(int argc, char *argv[])
 		} else {
 			pr_perror("unknown error");
 		}
-		pr_perror("\n");
 		return EXIT_FAILURE;
 	}
 
@@ -313,7 +312,7 @@ int main(int argc, char *argv[])
 	const char *root_path[] = { "root", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
 	if (!v_root) {
-		pr_perror("root not found in state\n");
+		pr_perror("root not found in state");
 		return EXIT_FAILURE;
 	}
 	char *rootfs = YAJL_GET_STRING(v_root);
@@ -321,7 +320,7 @@ int main(int argc, char *argv[])
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
-		pr_perror("pid not found in state\n");
+		pr_perror("pid not found in state");
 		return EXIT_FAILURE;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
@@ -329,7 +328,7 @@ int main(int argc, char *argv[])
 	const char *id_path[] = { "id", (const char *)0 };
 	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
 	if (!v_id) {
-		pr_perror("id not found in state\n");
+		pr_perror("id not found in state");
 		return EXIT_FAILURE;
 	}
 	char *id = YAJL_GET_STRING(v_id);
@@ -337,15 +336,15 @@ int main(int argc, char *argv[])
 	/* Parse the config file */
 	fp = fopen(argv[2], "r");
 	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s\n", argv[2]);
+		pr_perror("Failed to open config file: %s", argv[2]);
 		return EXIT_FAILURE;
 	}
 	rd = fread((void *)configData, 1, sizeof(configData) - 1, fp);
 	if (rd == 0 && !feof(fp)) {
-		pr_perror("error encountered on file read\n");
+		pr_perror("error encountered on file read");
 		return EXIT_FAILURE;
 	} else if (rd >= sizeof(configData) - 1) {
-		pr_perror("config file too big\n");
+		pr_perror("config file too big");
 		return EXIT_FAILURE;
 	}
 
@@ -357,7 +356,6 @@ int main(int argc, char *argv[])
 		} else {
 			pr_perror("unknown error");
 		}
-		pr_perror("\n");
 		return EXIT_FAILURE;
 	}
 
@@ -365,7 +363,7 @@ int main(int argc, char *argv[])
 	const char *cmd_path[] = { "Path", (const char *)0 };
 	yajl_val v_cmd = yajl_tree_get(config_node, cmd_path, yajl_t_string);
 	if (!v_cmd) {
-		pr_perror("Path not found in config\n");
+		pr_perror("Path not found in config");
 		return EXIT_FAILURE;
 	}
 	char *cmd = YAJL_GET_STRING(v_cmd);
@@ -381,18 +379,18 @@ int main(int argc, char *argv[])
 	const char *mount_label_path[] = { "MountLabel", (const char *)0 };
 	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
 	if (!v_mount) {
-		pr_perror("MountLabel not found in config\n");
+		pr_perror("MountLabel not found in config");
 		return EXIT_FAILURE;
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
-	pr_pinfo("Mount Label parsed as: %s\n", mount_label);
+	pr_pinfo("Mount Label parsed as: %s", mount_label);
 
 	/* Extract values from the config json */
 	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
 	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
 	if (!v_mps) {
-		pr_perror("MountPoints not found in config\n");
+		pr_perror("MountPoints not found in config");
 		return EXIT_FAILURE;
 	}
 
@@ -407,7 +405,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	} else {
-		pr_perror("command not recognized: %s\n", argv[1]);
+		pr_perror("command not recognized: %s", argv[1]);
 		return EXIT_FAILURE;
 	}
 
