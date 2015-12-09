@@ -12,6 +12,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <linux/limits.h>
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
@@ -53,6 +54,87 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
+
+#define CGROUP_ROOT "/sys/fs/cgroup"
+
+/*
+ * Get the contents of the file specified by its path
+ */
+static char *get_file_contents(const char *path) {
+	_cleanup_close_ int fd = -1;
+	if ((fd = open(path, O_RDONLY)) == -1) {
+		pr_perror("Failed to open file for reading");
+		return NULL;
+	}
+
+	char buffer[256];
+	size_t rd;
+	rd = read(fd, buffer, 256);
+	if (rd == -1) {
+		pr_perror("Failed to read file contents");
+		return NULL;
+	}
+
+	buffer[rd] = '\0';
+
+	return strdup(buffer);
+}
+
+/*
+ * Get the cgroup file system path for the specified process id
+ */
+static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
+	_cleanup_free_ char *cgroups_file_path = NULL;
+	int rc;
+	rc = asprintf(&cgroups_file_path, "/proc/%d/cgroup", pid);
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for cgroups file path");
+		return NULL;
+	}
+
+	_cleanup_fclose_ FILE *fp = NULL;
+	fp = fopen(cgroups_file_path, "r");
+	if (fp == NULL) {
+		pr_perror("Failed to open cgroups file");
+		return NULL;
+	}
+
+	_cleanup_free_ char *line = NULL;
+	ssize_t read;
+	size_t len = 0;
+	char *ptr;
+	char *path;
+	char *subsystem_path = NULL;
+	while ((read = getline(&line, &len, fp)) != -1) {
+		pr_pinfo("%s", line);
+		ptr = strchr(line, ':');
+		if (ptr == NULL) {
+			pr_perror("Error parsing cgroup, ':' not found: %s", line);
+			return NULL;
+		}
+		pr_pinfo("%s", ptr);
+		ptr++;
+		if (!strncmp(ptr, subsystem, strlen(subsystem))) {
+			pr_pinfo("Found");
+			char *path = strchr(ptr, '/');
+			if (path == NULL) {
+				pr_perror("Error finding path in cgroup: %s", line);
+				return NULL;
+			}
+			pr_pinfo("PATH: %s", path);
+			rc = asprintf(&subsystem_path, "%s/%s%s", CGROUP_ROOT, subsystem, path);
+			if (rc < 0) {
+				pr_perror("Failed to allocate memory for subsystemd path");
+				return NULL;
+			}
+			pr_pinfo("SUBSYSTEM_PATH: %s", subsystem_path);
+			subsystem_path[strlen(subsystem_path) - 1] = '\0';
+			return subsystem_path;
+		}
+	}
+
+	return NULL;
+}
 
 static int makepath(char *dir, mode_t mode)
 {
@@ -142,6 +224,36 @@ int prestart(const char *rootfs,
 		}
 	}
 
+	_cleanup_free_ char *memory_cgroup_path = NULL;
+	memory_cgroup_path = get_process_cgroup_subsystem_path(pid, "memory");
+	if (!memory_cgroup_path) {
+		pr_perror("Failed to get memory subsystem path for the process");
+		return -1;
+	}
+
+	char memory_limit_path[PATH_MAX];
+	snprintf(memory_limit_path, PATH_MAX, "%s/memory.limit_in_bytes", memory_cgroup_path);
+
+	pr_pinfo("memory path: %s", memory_limit_path);
+
+	_cleanup_free_ char *memory_limit_str = NULL;
+	memory_limit_str = get_file_contents(memory_limit_path);
+	if (!memory_limit_str) {
+		pr_perror("Failed to get memory limit from cgroups");
+		return -1;
+	}
+
+	pr_pinfo("LIMIT: %s\n", memory_limit_str);
+
+	uint64_t memory_limit_in_bytes = 0;
+	char *ptr = NULL;
+
+	memory_limit_in_bytes = strtoull(memory_limit_str, &ptr, 10);
+
+	pr_pinfo("Limit in bytes: ""%" PRIu64 "\n", memory_limit_in_bytes);
+
+	/* Set it to half of limit in kb */
+	uint64_t memory_limit_in_kb = memory_limit_in_bytes / 2048;
 
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
@@ -156,9 +268,9 @@ int prestart(const char *rootfs,
 		}
 
 		if (!strcmp("", mount_label)) {
-			rc = asprintf(&options, "mode=1777,size=65536k");
+			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k", memory_limit_in_kb);
 		} else {
-			rc = asprintf(&options, "mode=1777,size=65536k,context=\"%s\"", mount_label);
+			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k,context=\"%s\"", memory_limit_in_kb, mount_label);
 		}
 		if (rc < 0) {
 			pr_perror("Failed to allocate memory for context");
