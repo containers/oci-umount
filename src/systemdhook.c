@@ -54,6 +54,64 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define BUFLEN 1024
 #define CONFIGSZ 65536
 
+#define CGROUP_ROOT "/sys/fs/cgroup"
+
+/*
+ * Get the cgroup file system path for the specified process id
+ */
+static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
+	_cleanup_free_ char *cgroups_file_path = NULL;
+	int rc;
+	rc = asprintf(&cgroups_file_path, "/proc/%d/cgroup", pid);
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for cgroups file path");
+		return NULL;
+	}
+
+	_cleanup_fclose_ FILE *fp = NULL;
+	fp = fopen(cgroups_file_path, "r");
+	if (fp == NULL) {
+		pr_perror("Failed to open cgroups file");
+		return NULL;
+	}
+
+	_cleanup_free_ char *line = NULL;
+	ssize_t read;
+	size_t len = 0;
+	char *ptr;
+	char *path;
+	char *subsystem_path = NULL;
+	while ((read = getline(&line, &len, fp)) != -1) {
+		pr_pinfo("%s", line);
+		ptr = strchr(line, ':');
+		if (ptr == NULL) {
+			pr_perror("Error parsing cgroup, ':' not found: %s", line);
+			return NULL;
+		}
+		pr_pinfo("%s", ptr);
+		ptr++;
+		if (!strncmp(ptr, subsystem, strlen(subsystem))) {
+			pr_pinfo("Found");
+			char *path = strchr(ptr, '/');
+			if (path == NULL) {
+				pr_perror("Error finding path in cgroup: %s", line);
+				return NULL;
+			}
+			pr_pinfo("PATH: %s", path);
+			rc = asprintf(&subsystem_path, "%s/%s%s", CGROUP_ROOT, subsystem, path);
+			if (rc < 0) {
+				pr_perror("Failed to allocate memory for subsystemd path");
+				return NULL;
+			}
+			pr_pinfo("SUBSYSTEM_PATH: %s", subsystem_path);
+			subsystem_path[strlen(subsystem_path) - 1] = '\0';
+			return subsystem_path;
+		}
+	}
+
+	return NULL;
+}
+
 static int makepath(char *dir, mode_t mode)
 {
     if (!dir) {
@@ -141,7 +199,6 @@ int prestart(const char *rootfs,
 			return -1;
 		}
 	}
-
 
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
