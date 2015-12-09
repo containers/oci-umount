@@ -57,6 +57,29 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define CGROUP_ROOT "/sys/fs/cgroup"
 
 /*
+ * Get the contents of the file specified by its path
+ */
+static char *get_file_contents(const char *path) {
+	_cleanup_close_ int fd = -1;
+	if ((fd = open(path, O_RDONLY)) == -1) {
+		pr_perror("Failed to open file for reading");
+		return NULL;
+	}
+
+	char buffer[256];
+	size_t rd;
+	rd = read(fd, buffer, 256);
+	if (rd == -1) {
+		pr_perror("Failed to read file contents");
+		return NULL;
+	}
+
+	buffer[rd] = '\0';
+
+	return strdup(buffer);
+}
+
+/*
  * Get the cgroup file system path for the specified process id
  */
 static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
