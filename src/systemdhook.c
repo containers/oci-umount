@@ -12,6 +12,7 @@
 #include <sched.h>
 #include <unistd.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <linux/limits.h>
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
@@ -223,6 +224,37 @@ int prestart(const char *rootfs,
 		}
 	}
 
+	_cleanup_free_ char *memory_cgroup_path = NULL;
+	memory_cgroup_path = get_process_cgroup_subsystem_path(pid, "memory");
+	if (!memory_cgroup_path) {
+		pr_perror("Failed to get memory subsystem path for the process");
+		return -1;
+	}
+
+	char memory_limit_path[PATH_MAX];
+	snprintf(memory_limit_path, PATH_MAX, "%s/memory.limit_in_bytes", memory_cgroup_path);
+
+	pr_pinfo("memory path: %s", memory_limit_path);
+
+	_cleanup_free_ char *memory_limit_str = NULL;
+	memory_limit_str = get_file_contents(memory_limit_path);
+	if (!memory_limit_str) {
+		pr_perror("Failed to get memory limit from cgroups");
+		return -1;
+	}
+
+	pr_pinfo("LIMIT: %s\n", memory_limit_str);
+
+	uint64_t memory_limit_in_bytes = 0;
+	char *ptr = NULL;
+
+	memory_limit_in_bytes = strtoull(memory_limit_str, &ptr, 10);
+
+	pr_pinfo("Limit in bytes: ""%" PRIu64 "\n", memory_limit_in_bytes);
+
+	/* Set it to half of limit in kb */
+	uint64_t memory_limit_in_kb = memory_limit_in_bytes / 2048;
+
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
 
@@ -236,9 +268,9 @@ int prestart(const char *rootfs,
 		}
 
 		if (!strcmp("", mount_label)) {
-			rc = asprintf(&options, "mode=1777,size=65536k");
+			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k", memory_limit_in_kb);
 		} else {
-			rc = asprintf(&options, "mode=1777,size=65536k,context=\"%s\"", mount_label);
+			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k,context=\"%s\"", memory_limit_in_kb, mount_label);
 		}
 		if (rc < 0) {
 			pr_perror("Failed to allocate memory for context");
