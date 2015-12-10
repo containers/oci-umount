@@ -3,7 +3,9 @@ oci_systemd_hook(1) -- OCI systemd hook
 
 ## SYNOPSIS
 
-`oci_systemd_hook` [prestart|poststop]
+`oci_systemd_hook` prestart [container.json]
+
+`oci_systemd_hook` poststop
 
 ## DESCRIPTION
 
@@ -15,8 +17,12 @@ and creates /etc/machine-id for the container systemd.
 
 ## ARGUMENTS
 
-  * prestart  Setup the systemd environment in a container
-  * poststop  Teardown and undo the changes on the host done during prestart
+  * `prestart`:  Setup the systemd environment in a container
+
+  * `container.json`: file which describes the container. oci_systemd_hook will examine the json data for the `CMD` option and only setup the environment if the CMD is `init` or `systemd`. Only available on `prestart`.
+  
+  * `poststop`:  Teardown and undo the changes on the host done during prestart
+
 
 ## AUTHORS
 Mrunal Patel <mrunalp@gmail.com>
