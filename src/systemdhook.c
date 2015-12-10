@@ -49,8 +49,9 @@ static inline void fclosep(FILE **fp) {
 
 DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
-#define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook: " fmt ": %m\n", ##__VA_ARGS__)
-#define pr_pinfo(fmt, ...) syslog(LOG_INFO, "systemdhook: " fmt "\n", ##__VA_ARGS__)
+#define pr_perror(fmt, ...) syslog(LOG_ERR, "systemdhook <error>: " fmt ": %m\n", ##__VA_ARGS__)
+#define pr_pinfo(fmt, ...) syslog(LOG_INFO, "systemdhook <info>: " fmt "\n", ##__VA_ARGS__)
+#define pr_pdebug(fmt, ...) syslog(LOG_DEBUG, "systemdhook <debug>: " fmt "\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
 #define CONFIGSZ 65536
@@ -106,28 +107,28 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 	char *path;
 	char *subsystem_path = NULL;
 	while ((read = getline(&line, &len, fp)) != -1) {
-		pr_pinfo("%s", line);
+		pr_pdebug("%s", line);
 		ptr = strchr(line, ':');
 		if (ptr == NULL) {
 			pr_perror("Error parsing cgroup, ':' not found: %s", line);
 			return NULL;
 		}
-		pr_pinfo("%s", ptr);
+		pr_pdebug("%s", ptr);
 		ptr++;
 		if (!strncmp(ptr, subsystem, strlen(subsystem))) {
-			pr_pinfo("Found");
+			pr_pdebug("Found");
 			char *path = strchr(ptr, '/');
 			if (path == NULL) {
 				pr_perror("Error finding path in cgroup: %s", line);
 				return NULL;
 			}
-			pr_pinfo("PATH: %s", path);
+			pr_pdebug("PATH: %s", path);
 			rc = asprintf(&subsystem_path, "%s/%s%s", CGROUP_ROOT, subsystem, path);
 			if (rc < 0) {
 				pr_perror("Failed to allocate memory for subsystemd path");
 				return NULL;
 			}
-			pr_pinfo("SUBSYSTEM_PATH: %s", subsystem_path);
+			pr_pdebug("SUBSYSTEM_PATH: %s", subsystem_path);
 			subsystem_path[strlen(subsystem_path) - 1] = '\0';
 			return subsystem_path;
 		}
@@ -154,7 +155,7 @@ static int makepath(char *dir, mode_t mode)
 bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
 		if (!strcmp(mount, config_mounts[i])) {
-			pr_pinfo("%s already present as a mount point in container configuration, skipping\n", mount);
+			pr_pdebug("%s already present as a mount point in container configuration, skipping\n", mount);
 			return true;
 		}
 	}
@@ -234,7 +235,7 @@ int prestart(const char *rootfs,
 	char memory_limit_path[PATH_MAX];
 	snprintf(memory_limit_path, PATH_MAX, "%s/memory.limit_in_bytes", memory_cgroup_path);
 
-	pr_pinfo("memory path: %s", memory_limit_path);
+	pr_pdebug("memory path: %s", memory_limit_path);
 
 	_cleanup_free_ char *memory_limit_str = NULL;
 	memory_limit_str = get_file_contents(memory_limit_path);
@@ -243,14 +244,14 @@ int prestart(const char *rootfs,
 		return -1;
 	}
 
-	pr_pinfo("LIMIT: %s\n", memory_limit_str);
+	pr_pdebug("LIMIT: %s\n", memory_limit_str);
 
 	uint64_t memory_limit_in_bytes = 0;
 	char *ptr = NULL;
 
 	memory_limit_in_bytes = strtoull(memory_limit_str, &ptr, 10);
 
-	pr_pinfo("Limit in bytes: ""%" PRIu64 "\n", memory_limit_in_bytes);
+	pr_pdebug("Limit in bytes: ""%" PRIu64 "\n", memory_limit_in_bytes);
 
 	/* Set it to half of limit in kb */
 	uint64_t memory_limit_in_kb = memory_limit_in_bytes / 2048;
@@ -482,7 +483,7 @@ int main(int argc, char *argv[])
 
 	char *cmd_file_name = basename(cmd);
 	if (strcmp("init", cmd_file_name) && strcmp("systemd", cmd_file_name)) {
-		pr_pinfo("Skipping as container command is %s, not init or systemd\n", cmd);
+		pr_pdebug("Skipping as container command is %s, not init or systemd\n", cmd);
 		return EXIT_SUCCESS;
 	}
 #endif
@@ -496,7 +497,7 @@ int main(int argc, char *argv[])
 	}
 	char *mount_label = YAJL_GET_STRING(v_mount);
 
-	pr_pinfo("Mount Label parsed as: %s", mount_label);
+	pr_pdebug("Mount Label parsed as: %s", mount_label);
 
 	/* Extract values from the config json */
 	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
