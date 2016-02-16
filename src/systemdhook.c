@@ -22,7 +22,7 @@
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
 static inline void freep(void *p) {
-        free(*(void**) p);
+	free(*(void**) p);
 }
 
 static inline void closep(int *fd) {
@@ -42,10 +42,10 @@ static inline void fclosep(FILE **fp) {
 #define _cleanup_fclose_ _cleanup_(fclosep)
 
 #define DEFINE_CLEANUP_FUNC(type, func)                         \
-        static inline void func##p(type *p) {                   \
-                if (*p)                                         \
-                        func(*p);                               \
-        }                                                       \
+	static inline void func##p(type *p) {                   \
+		if (*p)                                         \
+			func(*p);                               \
+	}                                                       \
 
 DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
@@ -162,7 +162,7 @@ bool contains_mount(const char **config_mounts, unsigned len, const char *mount)
 	return false;
 }
 
-int prestart(const char *rootfs,
+static int prestart(const char *rootfs,
 		const char *id,
 		int pid,
 		const char *mount_label,
@@ -357,7 +357,7 @@ int prestart(const char *rootfs,
 	return 0;
 }
 
-int poststop(const char *rootfs,
+static int poststop(const char *rootfs,
 		const char *id,
 		int pid,
 		const char **config_mounts,
