@@ -21,6 +21,7 @@ BuildRequires:  autoconf
 BuildRequires:  automake
 BuildRequires:  yajl-devel
 BuildRequires:  libselinux-devel
+BuildRequires:  libmount-devel
 
 %description
 OCI systemd hooks enable running systemd in a OCI runc/docker container.
