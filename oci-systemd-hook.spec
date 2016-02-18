@@ -20,14 +20,14 @@ OCI systemd hooks enable running systemd in a OCI runc/docker container.
 
 %build
 autoreconf -i
-%configure --libexecdir=/usr/lib/docker/hooks.d/
+%configure --libexecdir=/usr/libexec/oci/hooks.d/
 make %{?_smp_mflags}
 
 %install
 %make_install
 
 %files
-%{_libdir}/docker/hooks.d/oci_systemd_hook
+%{_libexecdir}/oci/hooks.d/oci_systemd_hook
 %{_mandir}/man1/oci_systemd_hook.1*
 %doc README.md LICENSE
 
