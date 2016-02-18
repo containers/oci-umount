@@ -22,6 +22,7 @@ BuildRequires:  automake
 BuildRequires:  yajl-devel
 BuildRequires:  libselinux-devel
 BuildRequires:  libmount-devel
+BuildRequires:  golang-github-cpuguy83-go-md2man
 
 %description
 OCI systemd hooks enable running systemd in a OCI runc/docker container.
