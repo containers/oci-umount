@@ -1,11 +1,21 @@
+%global provider        github
+%global provider_tld    com
+%global project         projectatomic
+%global repo            oci-systemd-hook
+# https://github.com/projectatomic/oci-register-machine
+%global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
+%global import_path     %{provider_prefix}
+%global commit          c71ff9e3a1429414ce9f62f1984d473a1a54de34
+%global shortcommit     %(c=%{commit}; echo ${c:0:7})
+
 Name:           oci-systemd-hook
 Version:        0.1.3
-Release:        1%{?dist}
+Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI systemd hook for docker
 Group:          Applications/Text
 License:        GPLv3+
-URL:            https://github.com/mrunalp/hooks
-Source:         https://github.com/mrunalp/hooks/archive/%{name}-%{version}.tar.gz
+URL:            https://%{provider_prefix}
+Source0:        https://%{provider_prefix}/archive/%{commit}/%{repo}-%{shortcommit}.tar.gz
 
 BuildRequires:  autoconf
 BuildRequires:  automake
@@ -16,7 +26,7 @@ BuildRequires:  libselinux-devel
 OCI systemd hooks enable running systemd in a OCI runc/docker container.
 
 %prep
-%setup -q -n %{name}-%{version}
+%setup -q -n %{repo}-%{commit}
 
 %build
 autoreconf -i
@@ -27,8 +37,8 @@ make %{?_smp_mflags}
 %make_install
 
 %files
-%{_libexecdir}/oci/hooks.d/oci_systemd_hook
-%{_mandir}/man1/oci_systemd_hook.1*
+%{_libexecdir}/oci/hooks.d/oci-systemd-hook
+%{_mandir}/man1/oci-systemd-hook.1*
 %doc README.md LICENSE
 
 %changelog
