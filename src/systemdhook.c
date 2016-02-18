@@ -19,6 +19,9 @@
 
 #include "config.h"
 
+#include <libmount/libmount.h>
+
+
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
 static inline void freep(void *p) {
@@ -37,9 +40,23 @@ static inline void fclosep(FILE **fp) {
 	*fp = NULL;
 }
 
+static inline void mnt_free_iterp(struct libmnt_iter **itr) {
+	if (*itr)
+		mnt_free_iter(*itr);
+	*itr=NULL;
+}
+
+static inline void mnt_free_fsp(struct libmnt_fs **itr) {
+	if (*itr)
+		mnt_free_fs(*itr);
+	*itr=NULL;
+}
+
 #define _cleanup_free_ _cleanup_(freep)
 #define _cleanup_close_ _cleanup_(closep)
 #define _cleanup_fclose_ _cleanup_(fclosep)
+#define _cleanup_mnt_iter_ _cleanup_(mnt_free_iterp)
+#define _cleanup_mnt_fs_ _cleanup_(mnt_free_fsp)
 
 #define DEFINE_CLEANUP_FUNC(type, func)                         \
 	static inline void func##p(type *p) {                   \
@@ -57,6 +74,117 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define CONFIGSZ 65536
 
 #define CGROUP_ROOT "/sys/fs/cgroup"
+
+static int makepath(char *dir, mode_t mode)
+{
+    if (!dir) {
+	errno = EINVAL;
+	return -1;
+    }
+
+    if (strlen(dir) == 1 && dir[0] == '/')
+	return 0;
+
+    makepath(dirname(strdupa(dir)), mode);
+
+    return mkdir(dir, mode);
+}
+
+static int bind_mount(const char *src, const char *dest, int readonly) {
+	if (mount(src, dest, "bind", MS_BIND|MS_REC, NULL) == -1) {
+		pr_perror("Failed to mount %s on %s", src, dest);
+		return -1;
+	}
+	//  Remount bind mount to read/only if requested by the caller
+	if (readonly) {
+		if (mount(src, dest, "bind", MS_REMOUNT|MS_BIND|MS_RDONLY, "") == -1) {
+			pr_perror("Failed to remount %s readonly", dest);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+/* error callback */
+static int parser_errcb(struct libmnt_table *tb __attribute__ ((__unused__)),
+			const char *filename, int line)
+{
+	pr_perror("%s: parse error at line %d", filename, line);
+	return 0;
+}
+
+static struct libmnt_table *parse_tabfile(const char *path)
+{
+	int rc;
+	struct libmnt_table *tb = mnt_new_table();
+
+	if (!tb) {
+		pr_perror("failed to initialize libmount table");
+		return NULL;
+	}
+
+	mnt_table_set_parser_errcb(tb, parser_errcb);
+
+	rc = mnt_table_parse_file(tb, path);
+
+	if (rc) {
+		mnt_free_table(tb);
+		pr_perror("can't read %s", path);
+		return NULL;
+	}
+	return tb;
+}
+
+/* reads filesystems from @tb (libmount) looking for cgroup file systems
+   then bind mounts these file systems over rootfs
+ */
+static int mount_cgroup(struct libmnt_table *tb,
+			struct libmnt_fs *fs,
+			const char *rootfs)
+{
+	_cleanup_mnt_fs_ struct libmnt_fs *chld = NULL;
+	_cleanup_mnt_iter_ struct libmnt_iter *itr = NULL;
+
+	if (!fs) {
+		/* first call, get root FS */
+		if (mnt_table_get_root_fs(tb, &fs))
+			return -1;
+
+	}
+
+	itr = mnt_new_iter(MNT_ITER_FORWARD);
+	if (!itr)
+		return -1;
+
+	/*
+	 * add all children to the output table
+	 */
+	while (mnt_table_next_child_fs(tb, itr, fs, &chld) == 0) {
+		const char *src = mnt_fs_get_target(chld);
+		if (strncmp(src, CGROUP_ROOT, strlen(CGROUP_ROOT)) == 0) {
+			char dest[PATH_MAX];
+			snprintf(dest, PATH_MAX, "%s%s", rootfs, src);
+
+			if (makepath(dest, 0755) == -1) {
+				if (errno != EEXIST) {
+					pr_perror("Failed to mkdir container cgroup dir");
+					return -1;
+				}
+			}
+			/* Running systemd in a container requires you to 
+			   mount all cgroup file systems readonly except 
+			   /sys/fs/cgroup/systemd 
+			*/
+			int readonly = (strcmp(src,"/sys/fs/cgroup/systemd") == 0);
+			if (bind_mount(src, dest, readonly) < 0) {
+				return -1;
+			}
+		}
+		if (mount_cgroup(tb, chld, rootfs))
+			return -1;
+	}
+	return 0;
+}
 
 /*
  * Get the contents of the file specified by its path
@@ -137,22 +265,7 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 	return NULL;
 }
 
-static int makepath(char *dir, mode_t mode)
-{
-    if (!dir) {
-	errno = EINVAL;
-	return -1;
-    }
-
-    if (strlen(dir) == 1 && dir[0] == '/')
-	return 0;
-
-    makepath(dirname(strdupa(dir)), mode);
-
-    return mkdir(dir, mode);
-}
-
-bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
+static bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
 		if (!strcmp(mount, config_mounts[i])) {
 			pr_pdebug("%s already present as a mount point in container configuration, skipping\n", mount);
@@ -312,29 +425,32 @@ static int prestart(const char *rootfs,
 			}
 		}
 
-		/* Mount journal directory at /var/log/journal/UUID in the container */
-		if (mount(journal_dir, cont_journal_dir, "bind", MS_BIND|MS_REC, NULL) == -1) {
-			pr_perror("Failed to mount %s at %s", journal_dir, cont_journal_dir);
+		/* Mount journal directory at /var/log/journal in the container */
+		if (bind_mount(cont_journal_dir, cont_journal_dir, false) == -1) {
 			return -1;
 		}
 	}
 
 #if 0
 	if (!contains_mount(config_mounts, config_mounts_len, "/sys/fs/cgroup")) {
-		char cont_cgroup_dir[PATH_MAX];
-		snprintf(cont_cgroup_dir, PATH_MAX, "%s/sys/fs/cgroup", rootfs);
+		/* libmount */
+		struct libmnt_table *tb = NULL;
+		int rc = -1;
 
-		if (makepath(cont_cgroup_dir, 0755) == -1) {
-			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir container cgroup dir");
-				goto out;
-			}
+		/*
+		 * initialize libmount
+		 */
+		mnt_init_debug(0);
+
+		tb = parse_tabfile("/proc/self/mountinfo");
+		if (!tb) {
+			return -1;
 		}
 
-		/* Mount cgroup directory at /sys/fs/cgroup in the container */
-		if (mount("/sys/fs/cgroup", cont_cgroup_dir, "bind", MS_BIND|MS_REC, "ro") == -1) {
-			pr_perror("Failed to mount /sys/fs/cgroup at %s", cont_cgroup_dir);
-			goto out;
+		rc = mount_cgroup(tb, NULL, rootfs);
+		mnt_free_table(tb);
+		if (rc == -1) {
+			return -1;
 		}
 	}
 #endif
