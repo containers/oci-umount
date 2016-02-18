@@ -5,7 +5,7 @@
 # https://github.com/projectatomic/oci-register-machine
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
-%global commit          818bbbffe02d89c5130fa98878169f7f28638482
+%global commit          76d0b9c748f5f29e999a7fefd8c5bd588fda39de
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-systemd-hook
@@ -21,6 +21,7 @@ BuildRequires:  autoconf
 BuildRequires:  automake
 BuildRequires:  yajl-devel
 BuildRequires:  libselinux-devel
+BuildRequires:  libmount-devel
 
 %description
 OCI systemd hooks enable running systemd in a OCI runc/docker container.
