@@ -91,7 +91,7 @@ static int makepath(char *dir, mode_t mode)
 }
 
 static int bind_mount(const char *src, const char *dest, int readonly) {
-	if (mount(src, dest, "bind", MS_BIND|MS_REC, NULL) == -1) {
+	if (mount(src, dest, "bind", MS_BIND, NULL) == -1) {
 		pr_perror("Failed to mount %s on %s", src, dest);
 		return -1;
 	}
@@ -175,7 +175,7 @@ static int mount_cgroup(struct libmnt_table *tb,
 			   mount all cgroup file systems readonly except 
 			   /sys/fs/cgroup/systemd 
 			*/
-			int readonly = (strcmp(src,"/sys/fs/cgroup/systemd") == 0);
+			int readonly = (strcmp(src,"/sys/fs/cgroup/systemd") != 0);
 			if (bind_mount(src, dest, readonly) < 0) {
 				return -1;
 			}
@@ -431,7 +431,6 @@ static int prestart(const char *rootfs,
 		}
 	}
 
-#if 0
 	if (!contains_mount(config_mounts, config_mounts_len, "/sys/fs/cgroup")) {
 		/* libmount */
 		struct libmnt_table *tb = NULL;
@@ -453,7 +452,7 @@ static int prestart(const char *rootfs,
 			return -1;
 		}
 	}
-#endif
+
 	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
 		char mid_path[PATH_MAX];
 		snprintf(mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
