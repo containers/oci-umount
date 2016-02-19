@@ -5,10 +5,8 @@
 # https://github.com/projectatomic/oci-register-machine
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
-%global commit          fb2a8b5f6c5f86b5fe2b60bdd1c6f13025702ea1
+%global commit          d09d616c0aed86b9ceb2667b52ce7f00174af9c8
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
-#define license tag if not already defined
-%{!?_licensedir:%global license %doc}
 
 Name:           oci-systemd-hook
 Version:        0.1.4
@@ -40,6 +38,8 @@ make %{?_smp_mflags}
 %install
 %make_install
 
+#define license tag if not already defined
+%{!?_licensedir:%global license %doc}
 %files
 %{_libexecdir}/oci/hooks.d/oci-systemd-hook
 %{_mandir}/man1/oci-systemd-hook.1*
