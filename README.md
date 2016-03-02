@@ -1,32 +1,26 @@
 # OCI systemd hooks
 ==============
-OCI systemd hook enables running systemd in docker and [OCI](https://github.com/opencontainers/specs)
-compatible runtimes such as runc.
-
-oci-systemd-hook
-It reads state over stdin and mounts a tmpfs at /run, /tmp, links in a journal directory from the host and
-creates /etc/machine-id file for a container.
+OCI systemd hook enables users to run systemd in docker and [OCI](https://github.com/opencontainers/specs) compatible runtimes such as runc without requiring `--privileged` flag.
 
 This project produces a C binary that can be used with runc and Docker (with minor code changes).
-If you clone this branch and build/install `oci-systemd-hook`, a binary will be placed in
-`/usr/libexec/oci/hooks.d` named `oci-systemd-hook`. You can change this location by
-editing `HOOKSDIR` in the Makefile.
+If you clone this branch and build/install `oci-systemd-hook`, a binary should be placed in
+`/usr/libexec/oci/hooks.d` named `oci-systemd-hook`.
 
-Running Docker or OCI runc containers with this executable, oci-systemd-hook is called just before a container is started and after it is provisioned.  If the CMD to run inside of the container is init or systemd, this hook will configure
-the container image to run a systemd environment.
+Running Docker or OCI runc containers with this executable, oci-systemd-hook is called just before a container is started and after it is provisioned.  If the CMD to run inside of the container is `init` or `systemd`, this hook will configure the container image to run a systemd environment.  For all other CMD's, this hook will just exit.
 
-oci-systemd-hook will do the following
+When oci-systemd-hook detects systemd inside of the container it does the following:
 
-* Mount a tmpfs on /run and /tmp
+* Mounts a tmpfs on /run and /tmp
 -  If there is content in the container image's /run and /tmp that content will be compied onto the tmpfs.
-* Will create a /etc/machine-id based on the the containers UUID
-* Will mount the hosts /sys/fs/cgroups file systemd read-only into the container
+* Creates a /etc/machine-id based on the the containers UUID
+* Mounts the hosts /sys/fs/cgroups file systemd read-only into the container
 - /sys/fs/cgroup/systemd will be mounted read/write into the container.
 
-When the container stops, these file systems will be removed.
+When the container stops, these file systems will be umounted.
 
 systemd is expected to be able to run within the container without requiring
-the --privileged option.  However you will still need to specify a special --stop signal.
+the `--privileged` option.  However you will still need to specify a special `--stop-signal`.  Standard docker containers sends SIGTERM to pid 1, but systemd
+does not shut down properly when it recieves a SIGTERM.  systemd specified that it needs to recieve a RTMIN+3 signal to shutdown properly.
 
 If you created a container image based on a dockerfile like the following:
 ```
