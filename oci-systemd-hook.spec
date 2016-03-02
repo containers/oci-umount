@@ -19,9 +19,9 @@ Source0:        https://%{provider_prefix}/archive/%{commit}/%{repo}-%{shortcomm
 
 BuildRequires:  autoconf
 BuildRequires:  automake
-BuildRequires:  yajl-devel
-BuildRequires:  libselinux-devel
-BuildRequires:  libmount-devel
+BuildRequires:  pkgconfig(yajl)
+BuildRequires:  pkgconfig(libselinux)
+BuildRequires:  pkgconfig(mount)
 BuildRequires:  golang-github-cpuguy83-go-md2man
 
 %description
@@ -45,6 +45,8 @@ make %{?_smp_mflags}
 %{_mandir}/man1/oci-systemd-hook.1*
 %doc README.md
 %license LICENSE
+%dir /%{_libexecdir}/oci
+%dir /%{_libexecdir}/oci/hooks.d
 
 %changelog
 * Thu Feb 18 2016 Dan Walsh <dwalsh@redhat.com> - 0.1.4
