@@ -5,7 +5,7 @@
 # https://github.com/projectatomic/oci-register-machine
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
-%global commit          d09d616c0aed86b9ceb2667b52ce7f00174af9c8
+%global commit          de345df3c18a6abfc8d9cf3822405c0e1bbe65c9
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-systemd-hook
