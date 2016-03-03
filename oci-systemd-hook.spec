@@ -49,7 +49,7 @@ make %{?_smp_mflags}
 %dir /%{_libexecdir}/oci/hooks.d
 
 %changelog
-* Thu Feb 18 2016 Dan Walsh <dwalsh@redhat.com> - 0.1.4
+* Thu Feb 18 2016 Dan Walsh <dwalsh@redhat.com> - 0.1.4-1.gitde345df
 - Fix up to prepare for review
 
 * Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.3
