@@ -3,6 +3,9 @@ AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror subdir-objects])
 AC_PROG_CC
+AM_PROG_CC_C_O
+AC_USE_SYSTEM_EXTENSIONS
+AC_SYS_LARGEFILE
 
 PKG_CHECK_MODULES([YAJL], [yajl >= 2.0.0])
 PKG_CHECK_MODULES([SELINUX], [libselinux >= 2.0.0])
