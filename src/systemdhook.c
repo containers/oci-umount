@@ -232,7 +232,6 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 	ssize_t read;
 	size_t len = 0;
 	char *ptr;
-	char *path;
 	char *subsystem_path = NULL;
 	while ((read = getline(&line, &len, fp)) != -1) {
 		pr_pdebug("%s", line);
@@ -411,7 +410,7 @@ static int prestart(const char *rootfs,
 		}
 
 		if (strcmp("", mount_label)) {
-			rc = setfilecon(journal_dir, mount_label);
+			rc = setfilecon(journal_dir, (security_context_t)mount_label);
 			if (rc < 0) {
 				pr_perror("Failed to set journal dir selinux context");
 				return -1;
@@ -508,7 +507,6 @@ int main(int argc, char *argv[])
 	char errbuf[BUFLEN];
 	char stateData[CONFIGSZ];
 	char configData[CONFIGSZ];
-	int ret = -1;
 	_cleanup_fclose_ FILE *fp = NULL;
 
 	stateData[0] = 0;
