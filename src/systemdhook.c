@@ -410,7 +410,7 @@ static int prestart(const char *rootfs,
 		}
 
 		if (strcmp("", mount_label)) {
-			rc = setfilecon(journal_dir, mount_label);
+			rc = setfilecon(journal_dir, (security_context_t)mount_label);
 			if (rc < 0) {
 				pr_perror("Failed to set journal dir selinux context");
 				return -1;
