@@ -232,7 +232,6 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 	ssize_t read;
 	size_t len = 0;
 	char *ptr;
-	char *path;
 	char *subsystem_path = NULL;
 	while ((read = getline(&line, &len, fp)) != -1) {
 		pr_pdebug("%s", line);
@@ -508,7 +507,6 @@ int main(int argc, char *argv[])
 	char errbuf[BUFLEN];
 	char stateData[CONFIGSZ];
 	char configData[CONFIGSZ];
-	int ret = -1;
 	_cleanup_fclose_ FILE *fp = NULL;
 
 	stateData[0] = 0;
