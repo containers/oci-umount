@@ -11,7 +11,7 @@ Running Docker or OCI runc containers with this executable, oci-systemd-hook is 
 When oci-systemd-hook detects systemd inside of the container it does the following:
 
 * Mounts a tmpfs on /run and /tmp
--  If there is content in the container image's /run and /tmp that content will be compied onto the tmpfs.
+-  If there is content in the container image's /run and /tmp that content will be copied onto the tmpfs.
 * Creates a /etc/machine-id based on the the containers UUID
 * Mounts the hosts /sys/fs/cgroups file systemd read-only into the container
 - /sys/fs/cgroup/systemd will be mounted read/write into the container.
@@ -20,7 +20,7 @@ When the container stops, these file systems will be umounted.
 
 systemd is expected to be able to run within the container without requiring
 the `--privileged` option.  However you will still need to specify a special `--stop-signal`.  Standard docker containers sends SIGTERM to pid 1, but systemd
-does not shut down properly when it recieves a SIGTERM.  systemd specified that it needs to recieve a RTMIN+3 signal to shutdown properly.
+does not shut down properly when it recieves a SIGTERM.  systemd specified that it needs to receive a RTMIN+3 signal to shutdown properly.
 
 If you created a container image based on a dockerfile like the following:
 ```
