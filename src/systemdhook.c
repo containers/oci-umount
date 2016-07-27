@@ -274,6 +274,97 @@ static bool contains_mount(const char **config_mounts, unsigned len, const char 
 	return false;
 }
 
+/*
+ * Move specified mount to temporary directory
+ */
+static int move_mount_to_runtmp(const char *rootfs, const char *run_tmp_dir, const char *mount_dir)
+{
+	int rc;
+	_cleanup_free_ char *src = NULL;
+	_cleanup_free_ char *dest = NULL;
+	_cleanup_free_ char *post = NULL;
+	const char *ptr = NULL;
+
+	rc = asprintf(&src, "%s/%s", rootfs, mount_dir);
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for src");
+		return -1;
+	}
+
+	/* Find the second '/' to get the postfix */
+	ptr = strchr(mount_dir, '/');
+	ptr++;
+	ptr = strchr(ptr, '/');
+	post = strdup(ptr);
+	if (!post) {
+		pr_perror("Failed to allocate memory for postfix");
+		return -1;
+	}
+
+	rc = asprintf(&dest, "%s/%s", run_tmp_dir, post);
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for dest");
+		return -1;
+	}
+
+	if (makepath(dest, 0755) == -1) {
+		if (errno != EEXIST) {
+			pr_perror("Failed to mkdir new dest");
+			return -1;
+		}
+	}
+
+	/* Move the mount to temporary directory */
+	if ((mount(src, dest, "", MS_MOVE, "") == -1)) {
+		pr_perror("Failed to move mount %s to %s", src, dest);
+		return -1;
+	}
+
+	return 0;
+}
+
+#define RUN_PREFIX "/run/"
+
+/*
+ * Move the mounts under /run to temporary directory under /tmp (on the host)
+ */
+static int adjust_run_mounts(const char *rootfs,
+		 const char *run_tmp_dir,
+		 const char **config_mounts,
+		 unsigned len)
+{
+	int rc = -1;
+	struct stat st = {0};
+	_cleanup_free_ char *run_secrets_dir = NULL;
+
+	rc = asprintf(&run_secrets_dir, "%s/%s", rootfs, "run/secrets");
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for run_secrets_dir");
+		return -1;
+	}
+
+	/* Move /runc/secrets to temporary directory if it exists */
+	if (stat(run_secrets_dir, &st) == 0 && (S_ISDIR(st.st_mode))) {
+		if (move_mount_to_runtmp(rootfs, run_tmp_dir, "/run/secrets") < 0) {
+			pr_perror("Failed to move %s to %s", run_secrets_dir, run_tmp_dir);
+			return -1;
+		}
+	}
+
+	/* Move other user specified mounts under /run to temporary directory */
+	for (unsigned i = 0; i < len; i++) {
+		/* Match destinations that begin with /run/ */
+		if (!strncmp(RUN_PREFIX, config_mounts[i], strlen(RUN_PREFIX))) {
+			if (move_mount_to_runtmp(rootfs, run_tmp_dir, config_mounts[i]) < 0) {
+				pr_perror("Failed to move %s to %s", config_mounts[i], run_tmp_dir);
+				return -1;
+			}
+		}
+	}
+
+	return 0;
+}
+
 static int prestart(const char *rootfs,
 		const char *id,
 		int pid,
@@ -311,6 +402,15 @@ static int prestart(const char *rootfs,
 	char run_dir[PATH_MAX];
 	snprintf(run_dir, PATH_MAX, "%s/run", rootfs);
 
+	/* Create a temporary directory to move the /run mounts to */
+	char temp_template[] = "/tmp/runtmp.XXXXXX";
+
+	char *run_tmp_dir = mkdtemp(temp_template);
+	if (run_tmp_dir == NULL) {
+		pr_perror("Failed to create temporary directory for /run mounts");
+		return -1;
+	}
+
 	/* Create the /run directory */
 	if (!contains_mount(config_mounts, config_mounts_len, "/run")) {
 		if (mkdir(run_dir, 0755) == -1) {
@@ -330,11 +430,29 @@ static int prestart(const char *rootfs,
 			return -1;
 		}
 
-		/* Mount tmpfs at /run for systemd */
-		if (mount("tmpfs", run_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
-			pr_perror("Failed to mount tmpfs at /run");
+		/* Mount tmpfs at new temp directory */
+		if (mount("tmpfs", run_tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
+			pr_perror("Failed to mount tmpfs at %s", run_tmp_dir);
 			return -1;
 		}
+
+		/* Adjust the mount heirarchy under /run */
+		if (adjust_run_mounts(rootfs, run_tmp_dir, config_mounts, config_mounts_len) < 0) {
+			pr_perror("Failed to set heirarchy under /run");
+			return -1;
+		}
+
+		/* Move temporary directory to /run */
+		if ((mount(run_tmp_dir, run_dir, "", MS_MOVE, "") == -1)) {
+			pr_perror("Failed to move mount %s to %s", run_tmp_dir, run_dir);
+			return -1;
+		}
+	}
+
+	/* Remove the temp directory for /run */
+	if (rmdir(run_tmp_dir) < 0) {
+		pr_perror("Failed to remove %s", run_tmp_dir);
+		return -1;
 	}
 
 	_cleanup_free_ char *memory_cgroup_path = NULL;
