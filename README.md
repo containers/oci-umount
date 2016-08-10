@@ -27,7 +27,7 @@ If you created a container image based on a dockerfile like the following:
 cat Dockerfile
 FROM fedora:latest
 ENV container docker
-RUN dnf -y install httpd; dnf clean all; systemctl enable httpd; systemctl disable dnf* dnf-makecache.timer
+RUN dnf -y install httpd; dnf -y update; dnf clean all; systemctl enable httpd; systemctl disable dnf-makecache.timer dnf-makecache.service
 CMD [ "/sbin/init" ]
 ```
 
