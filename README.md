@@ -25,7 +25,7 @@ does not shut down properly when it recieves a SIGTERM.  systemd specified that 
 If you created a container image based on a dockerfile like the following:
 ```
 cat Dockerfile
-FROM 		RHEL7
+FROM fedora:latest
 ENV container docker
 RUN dnf -y install httpd; dnf clean all; systemctl enable httpd; systemctl disable dnf* dnf-makecache.timer
 CMD [ "/sbin/init" ]
