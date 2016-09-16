@@ -334,8 +334,16 @@ static int adjust_run_mounts(const char *rootfs,
 		 unsigned len)
 {
 	int rc = -1;
-	struct stat st = {0};
+	struct stat secrets_st = {0};
+	struct stat run_st = {0};
 	_cleanup_free_ char *run_secrets_dir = NULL;
+	_cleanup_free_ char *run_dir = NULL;
+
+	rc = asprintf(&run_dir, "%s/%s", rootfs, "run");
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for run_dir");
+		return -1;
+	}
 
 	rc = asprintf(&run_secrets_dir, "%s/%s", rootfs, "run/secrets");
 	if (rc < 0) {
@@ -343,8 +351,11 @@ static int adjust_run_mounts(const char *rootfs,
 		return -1;
 	}
 
-	/* Move /runc/secrets to temporary directory if it exists */
-	if (stat(run_secrets_dir, &st) == 0 && (S_ISDIR(st.st_mode))) {
+	/* Move /runc/secrets to temporary directory if it exists and it is a mountpoint */
+	if (stat(run_dir, &run_st) == 0 &&
+	    stat(run_secrets_dir, &secrets_st) == 0 &&
+	    secrets_st.st_rdev != run_st.st_rdev &&
+	    (S_ISDIR(secrets_st.st_mode))) {
 		if (move_mount_to_runtmp(rootfs, run_tmp_dir, "/run/secrets") < 0) {
 			pr_perror("Failed to move %s to %s", run_secrets_dir, run_tmp_dir);
 			return -1;
