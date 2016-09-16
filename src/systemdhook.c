@@ -351,7 +351,7 @@ static int adjust_run_mounts(const char *rootfs,
 		return -1;
 	}
 
-	/* Move /runc/secrets to temporary directory if it exists and it is a mountpoint */
+	/* Move /run/secrets to temporary directory if it exists and it is a mountpoint */
 	if (stat(run_dir, &run_st) == 0 &&
 	    stat(run_secrets_dir, &secrets_st) == 0 &&
 	    secrets_st.st_rdev != run_st.st_rdev &&
@@ -447,9 +447,9 @@ static int prestart(const char *rootfs,
 			return -1;
 		}
 
-		/* Adjust the mount heirarchy under /run */
+		/* Adjust the mount hierarchy under /run */
 		if (adjust_run_mounts(rootfs, run_tmp_dir, config_mounts, config_mounts_len) < 0) {
-			pr_perror("Failed to set heirarchy under /run");
+			pr_perror("Failed to set hierarchy under /run");
 			return -1;
 		}
 
