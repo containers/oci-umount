@@ -712,6 +712,11 @@ int main(int argc, char *argv[])
 	}
 	char *cmd = YAJL_GET_STRING(v_cmd);
 
+	/* Don't do anything if init is actually docker bind mounted /dev/init */
+	if (!strcmp(cmd, "/dev/init")) {
+		pr_pdebug("Skipping as container command is /dev/init, not systemd init\n");
+		return EXIT_SUCCESS;
+	}
 	char *cmd_file_name = basename(cmd);
 	if (strcmp("init", cmd_file_name) && strcmp("systemd", cmd_file_name)) {
 		pr_pdebug("Skipping as container command is %s, not init or systemd\n", cmd);
