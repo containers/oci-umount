@@ -167,7 +167,7 @@ static int mount_cgroup(struct libmnt_table *tb,
 
 			if (makepath(dest, 0755) == -1) {
 				if (errno != EEXIST) {
-					pr_perror("Failed to mkdir container cgroup dir");
+					pr_perror("Failed to mkdir container cgroup dir: %s", dest);
 					return -1;
 				}
 			}
@@ -309,7 +309,7 @@ static int move_mount_to_runtmp(const char *rootfs, const char *run_tmp_dir, con
 
 	if (makepath(dest, 0755) == -1) {
 		if (errno != EEXIST) {
-			pr_perror("Failed to mkdir new dest");
+			pr_perror("Failed to mkdir new dest: %s", dest);
 			return -1;
 		}
 	}
@@ -415,7 +415,7 @@ static int prestart(const char *rootfs,
 	if (!contains_mount(config_mounts, config_mounts_len, "/run")) {
 		if (mkdir(run_dir, 0755) == -1) {
 			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir");
+				pr_perror("Failed to mkdir: %s", run_dir);
 				return -1;
 			}
 		}
@@ -493,7 +493,7 @@ static int prestart(const char *rootfs,
 	if (!contains_mount(config_mounts, config_mounts_len, "/tmp")) {
 		if (mkdir(tmp_dir, 0755) == -1) {
 			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir");
+				pr_perror("Failed to mkdir: %s", tmp_dir);
 				return -1;
 			}
 		}
@@ -522,7 +522,7 @@ static int prestart(const char *rootfs,
 		snprintf(cont_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
 		if (makepath(journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir journal dir");
+				pr_perror("Failed to mkdir journal dir: %s", journal_dir);
 				return -1;
 			}
 		}
@@ -537,7 +537,7 @@ static int prestart(const char *rootfs,
 
 		if (makepath(cont_journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir container journal dir");
+				pr_perror("Failed to mkdir container journal dir: %s", cont_journal_dir);
 				return -1;
 			}
 		}
