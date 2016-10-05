@@ -334,8 +334,16 @@ static int adjust_run_mounts(const char *rootfs,
 		 unsigned len)
 {
 	int rc = -1;
-	struct stat st = {0};
+	struct stat secrets_st = {0};
+	struct stat run_st = {0};
 	_cleanup_free_ char *run_secrets_dir = NULL;
+	_cleanup_free_ char *run_dir = NULL;
+
+	rc = asprintf(&run_dir, "%s/%s", rootfs, "run");
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for run_dir");
+		return -1;
+	}
 
 	rc = asprintf(&run_secrets_dir, "%s/%s", rootfs, "run/secrets");
 	if (rc < 0) {
@@ -343,8 +351,11 @@ static int adjust_run_mounts(const char *rootfs,
 		return -1;
 	}
 
-	/* Move /runc/secrets to temporary directory if it exists */
-	if (stat(run_secrets_dir, &st) == 0 && (S_ISDIR(st.st_mode))) {
+	/* Move /run/secrets to temporary directory if it exists and it is a mountpoint */
+	if (stat(run_dir, &run_st) == 0 &&
+	    stat(run_secrets_dir, &secrets_st) == 0 &&
+	    secrets_st.st_rdev != run_st.st_rdev &&
+	    (S_ISDIR(secrets_st.st_mode))) {
 		if (move_mount_to_runtmp(rootfs, run_tmp_dir, "/run/secrets") < 0) {
 			pr_perror("Failed to move %s to %s", run_secrets_dir, run_tmp_dir);
 			return -1;
@@ -436,9 +447,9 @@ static int prestart(const char *rootfs,
 			return -1;
 		}
 
-		/* Adjust the mount heirarchy under /run */
+		/* Adjust the mount hierarchy under /run */
 		if (adjust_run_mounts(rootfs, run_tmp_dir, config_mounts, config_mounts_len) < 0) {
-			pr_perror("Failed to set heirarchy under /run");
+			pr_perror("Failed to set hierarchy under /run");
 			return -1;
 		}
 
@@ -613,12 +624,6 @@ static int poststop(const char *rootfs,
 
 int main(int argc, char *argv[])
 {
-
-	if (argc < 3) {
-		pr_perror("Expect atleast 2 arguments");
-		exit(1);
-	}
-
 	size_t rd;
 	_cleanup_(yajl_tree_freep) yajl_val node = NULL;
 	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
@@ -677,8 +682,25 @@ int main(int argc, char *argv[])
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
+	/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
+	   If it is not specified, then check that it is specified on the command line.  */
+	const char *bundle_path[] = { "bundlePath", (const char *)0 };
+	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
+	if (v_bundle_path) {
+		char config_file_name[PATH_MAX];
+		sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
+		fp = fopen(config_file_name, "r");
+	}
+	else {
+		if (argc < 3) {
+			pr_perror("cannot find config file to use");
+			return EXIT_FAILURE;
+		}
+
+		fp = fopen(argv[2], "r");
+	}
+
 	/* Parse the config file */
-	fp = fopen(argv[2], "r");
 	if (fp == NULL) {
 		pr_perror("Failed to open config file: %s", argv[2]);
 		return EXIT_FAILURE;
@@ -703,15 +725,87 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-#ifdef ARGS_CHECK
-	const char *cmd_path[] = { "Path", (const char *)0 };
-	yajl_val v_cmd = yajl_tree_get(config_node, cmd_path, yajl_t_string);
-	if (!v_cmd) {
-		pr_perror("Path not found in config");
-		return EXIT_FAILURE;
-	}
-	char *cmd = YAJL_GET_STRING(v_cmd);
+	char *cmd = NULL;
+	char *mount_label = NULL;
+	const char **config_mounts = NULL;
+	unsigned config_mounts_len = 0;
 
+	const char *linux_path[] = { "linux", (const char *)0 };
+
+	/* if "linux" is present, we can assume it is as an OCI config.json file */
+	if (yajl_tree_get(config_node, linux_path, yajl_t_object)) {
+		/* Extract values from the config json */
+		const char *mount_label_path[] = { "linux", "mountLabel", (const char *)0 };
+		yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
+		mount_label = v_mount ? YAJL_GET_STRING(v_mount) : "";
+
+		const char *mount_points_path[] = {"mounts", (const char *)0 };
+		yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
+		if (!v_mounts) {
+			pr_perror("mounts not found in config");
+			return EXIT_FAILURE;
+		}
+
+		config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
+		config_mounts = malloc (sizeof(char *) * (config_mounts_len + 1));
+		if (! config_mounts) {
+			pr_perror("error malloc'ing");
+			return EXIT_FAILURE;
+		}
+
+		for (unsigned int i = 0; i < config_mounts_len; i++) {
+			yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
+
+			const char *destination_path[] = {"destination", (const char *)0 };
+			yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
+			if (!v_destination) {
+				pr_perror("Cannot find mount destination");
+				return EXIT_FAILURE;
+			}
+			config_mounts[i] = YAJL_GET_STRING(v_destination);
+		}
+
+		const char *args_path[] = {"process", "args", (const char *)0 };
+		yajl_val v_args = yajl_tree_get(config_node, args_path, yajl_t_array);
+		if (!v_args) {
+			pr_perror("args not found in config");
+			return EXIT_FAILURE;
+		}
+		yajl_val v_arg0_value = YAJL_GET_ARRAY(v_args)->values[0];
+		cmd = YAJL_GET_STRING(v_arg0_value);
+	} else {
+		/* Handle the Docker case here.  */
+
+		/* Extract values from the config json */
+		const char *mount_label_path[] = { "MountLabel", (const char *)0 };
+		yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
+		if (!v_mount) {
+			pr_perror("MountLabel not found in config");
+			return EXIT_FAILURE;
+		}
+		mount_label = YAJL_GET_STRING(v_mount);
+
+		/* Extract values from the config json */
+		const char *mount_points_path[] = { "MountPoints", (const char *)0 };
+		yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
+		if (!v_mps) {
+			pr_perror("MountPoints not found in config");
+			return EXIT_FAILURE;
+		}
+
+		config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
+		config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
+
+		const char *cmd_path[] = { "Path", (const char *)0 };
+		yajl_val v_cmd = yajl_tree_get(config_node, cmd_path, yajl_t_string);
+		if (!v_cmd) {
+			pr_perror("Path not found in config");
+			return EXIT_FAILURE;
+		}
+		cmd = YAJL_GET_STRING(v_cmd);
+	}
+
+#ifdef ARGS_CHECK
 	/* Don't do anything if init is actually docker bind mounted /dev/init */
 	if (!strcmp(cmd, "/dev/init")) {
 		pr_pdebug("Skipping as container command is /dev/init, not systemd init\n");
@@ -724,32 +818,13 @@ int main(int argc, char *argv[])
 	}
 #endif
 
-	/* Extract values from the config json */
-	const char *mount_label_path[] = { "MountLabel", (const char *)0 };
-	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
-	if (!v_mount) {
-		pr_perror("MountLabel not found in config");
-		return EXIT_FAILURE;
-	}
-	char *mount_label = YAJL_GET_STRING(v_mount);
-
-	pr_pdebug("Mount Label parsed as: %s", mount_label);
-
-	/* Extract values from the config json */
-	const char *mount_points_path[] = { "MountPoints", (const char *)0 };
-	yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
-	if (!v_mps) {
-		pr_perror("MountPoints not found in config");
-		return EXIT_FAILURE;
-	}
-
-	const char **config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
-	unsigned config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
-	if (!strcmp("prestart", argv[1])) {
+	/* OCI hooks set target_pid to 0 on poststop, as the container process already
+	   exited.  If target_pid is bigger than 0 then it is the prestart hook.  */
+	if ((argc > 2 && !strcmp("prestart", argv[1])) || target_pid) {
 		if (prestart(rootfs, id, target_pid, mount_label, config_mounts, config_mounts_len) != 0) {
 			return EXIT_FAILURE;
 		}
-	} else if (!strcmp("poststop", argv[1])) {
+	} else if ((argc > 2 && !strcmp("poststop", argv[1])) || (target_pid == 0)) {
 		if (poststop(rootfs, id, target_pid, config_mounts, config_mounts_len) != 0) {
 			return EXIT_FAILURE;
 		}
