@@ -622,6 +622,8 @@ static int poststop(const char *rootfs,
 	return ret;
 }
 
+#define DOCKER_CONTAINER "docker"
+
 int main(int argc, char *argv[])
 {
 	size_t rd;
@@ -631,6 +633,7 @@ int main(int argc, char *argv[])
 	char stateData[CONFIGSZ];
 	char configData[CONFIGSZ];
 	_cleanup_fclose_ FILE *fp = NULL;
+	bool docker = false;
 
 	stateData[0] = 0;
 	errbuf[0] = 0;
@@ -682,23 +685,30 @@ int main(int argc, char *argv[])
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
-	/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
-	   If it is not specified, then check that it is specified on the command line.  */
-	const char *bundle_path[] = { "bundlePath", (const char *)0 };
-	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
-	if (v_bundle_path) {
-		char config_file_name[PATH_MAX];
-		sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
-		fp = fopen(config_file_name, "r");
+	const char *ctr = getenv("container");
+	if (!strncmp(ctr, DOCKER_CONTAINER, strlen(DOCKER_CONTAINER))) {
+		docker = true;
 	}
-	else {
+
+	if (docker) {
 		if (argc < 3) {
 			pr_perror("cannot find config file to use");
 			return EXIT_FAILURE;
 		}
 
 		fp = fopen(argv[2], "r");
+	} else {
+		/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
+		   If it is not specified, then check that it is specified on the command line.  */
+		const char *bundle_path[] = { "bundlePath", (const char *)0 };
+		yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
+		if (v_bundle_path) {
+			char config_file_name[PATH_MAX];
+			sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
+			fp = fopen(config_file_name, "r");
+		}
 	}
+
 
 	/* Parse the config file */
 	if (fp == NULL) {
@@ -732,8 +742,7 @@ int main(int argc, char *argv[])
 
 	const char *linux_path[] = { "linux", (const char *)0 };
 
-	/* if "linux" is present, we can assume it is as an OCI config.json file */
-	if (yajl_tree_get(config_node, linux_path, yajl_t_object)) {
+	if (!docker) {
 		/* Extract values from the config json */
 		const char *mount_label_path[] = { "linux", "mountLabel", (const char *)0 };
 		yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
