@@ -782,6 +782,26 @@ int main(int argc, char *argv[])
 		}
 		yajl_val v_arg0_value = YAJL_GET_ARRAY(v_args)->values[0];
 		cmd = YAJL_GET_STRING(v_arg0_value);
+
+		const char *envs[] = {"process", "env", (const char *)0 };
+		yajl_val v_envs = yajl_tree_get(config_node, envs, yajl_t_array);
+		if (v_envs) {
+			for (unsigned int i = 0; i < YAJL_GET_ARRAY(v_envs)->len; i++) {
+				yajl_val v_env = YAJL_GET_ARRAY(v_envs)->values[i];
+				char *str = YAJL_GET_STRING(v_env);
+				if (strncmp (str, "container_uuid=", strlen ("container_uuid=")) == 0) {
+					id = strdup (str + strlen ("container_uuid="));
+					/* systemd expects $container_uuid= to be an UUID but then treat it as
+					   not containing any '-'.  Do the same here.  */
+					char *to = id;
+					for (char *from = to; *from; from++) {
+					if (*from != '-')
+						*to++ = *from;
+					}
+					*to = '\0';
+				}
+			}
+		}
 	} else {
 		/* Handle the Docker case here.  */
 
