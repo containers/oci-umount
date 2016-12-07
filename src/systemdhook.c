@@ -527,6 +527,13 @@ static int prestart(const char *rootfs,
 	}
 
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
+		char tmp_dir[PATH_MAX];
+		snprintf(tmp_dir, PATH_MAX, "%s/var/log", rootfs);
+		/* Mount tmpfs at /tmp for systemd */
+		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
+			pr_perror("Failed to mount tmpfs at /var/log");
+			return -1;
+		}
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
 		char cont_journal_dir[PATH_MAX];
