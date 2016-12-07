@@ -554,7 +554,7 @@ static int prestart(const char *rootfs,
 		}
 
 		/* Mount journal directory at /var/log/journal in the container */
-		if (bind_mount(cont_journal_dir, cont_journal_dir, false) == -1) {
+		if (bind_mount(journal_dir, cont_journal_dir, false) == -1) {
 			return -1;
 		}
 	}
