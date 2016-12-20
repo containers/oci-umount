@@ -442,7 +442,7 @@ static int prestart(const char *rootfs,
 		}
 
 		/* Mount tmpfs at new temp directory */
-		if (mount("tmpfs", run_tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID|MS_NOEXEC, options) == -1) {
+		if (mount("tmpfs", run_tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
 			pr_perror("Failed to mount tmpfs at %s", run_tmp_dir);
 			return -1;
 		}
