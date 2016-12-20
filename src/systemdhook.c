@@ -7,6 +7,7 @@
 #include <sys/mount.h>
 #include <syslog.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -21,6 +22,14 @@
 
 #include <libmount/libmount.h>
 
+static unsigned long get_mem_total() {
+	struct sysinfo info;
+	int ret = sysinfo(&info);
+	if (ret < 0) {
+		return ret;
+	}
+	return info.totalram;
+}
 
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
@@ -487,6 +496,8 @@ static int prestart(const char *rootfs,
 
 	pr_pdebug("LIMIT: %s\n", memory_limit_str);
 
+	char memory_str[PATH_MAX];
+	uint64_t total_memory = 0;
 	uint64_t memory_limit_in_bytes = 0;
 	char *ptr = NULL;
 
@@ -494,8 +505,14 @@ static int prestart(const char *rootfs,
 
 	pr_pdebug("Limit in bytes: ""%" PRIu64 "\n", memory_limit_in_bytes);
 
-	/* Set it to half of limit in kb */
-	uint64_t memory_limit_in_kb = memory_limit_in_bytes / 2048;
+	total_memory = get_mem_total();
+	if (memory_limit_in_bytes < total_memory) {
+		/* Set it to half of limit in kb */
+		uint64_t memory_limit_in_kb = memory_limit_in_bytes / 2048;
+		snprintf(memory_str, sizeof(memory_str)-1 , ",size=%" PRIu64 "k", memory_limit_in_kb);
+	} else {
+		strcpy(memory_str, "");
+	}
 
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
@@ -510,9 +527,9 @@ static int prestart(const char *rootfs,
 		}
 
 		if (!strcmp("", mount_label)) {
-			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k", memory_limit_in_kb);
+			rc = asprintf(&options, "mode=1777%s", memory_str);
 		} else {
-			rc = asprintf(&options, "mode=1777,size=%" PRIu64 "k,context=\"%s\"", memory_limit_in_kb, mount_label);
+			rc = asprintf(&options, "mode=1777%s,context=\"%s\"", memory_str, mount_label);
 		}
 		if (rc < 0) {
 			pr_perror("Failed to allocate memory for context");
