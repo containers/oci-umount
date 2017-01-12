@@ -546,7 +546,7 @@ static int prestart(const char *rootfs,
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
 		char tmp_dir[PATH_MAX];
 		snprintf(tmp_dir, PATH_MAX, "%s/var/log", rootfs);
-		/* Mount tmpfs at /tmp for systemd */
+		/* Mount tmpfs at /var/log for systemd */
 		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
 			pr_perror("Failed to mount tmpfs at /var/log");
 			return -1;
@@ -858,7 +858,7 @@ int main(int argc, char *argv[])
 		cmd = YAJL_GET_STRING(v_cmd);
 	}
 
-#ifdef ARGS_CHECK
+#if ARGS_CHECK
 	/* Don't do anything if init is actually docker bind mounted /dev/init */
 	if (!strcmp(cmd, "/dev/init")) {
 		pr_pdebug("Skipping as container command is /dev/init, not systemd init\n");
