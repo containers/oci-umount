@@ -206,7 +206,7 @@ static char *get_file_contents(const char *path) {
 	}
 
 	char buffer[256];
-	size_t rd;
+	ssize_t rd;
 	rd = read(fd, buffer, 256);
 	if (rd == -1) {
 		pr_perror("Failed to read file contents");
@@ -292,7 +292,6 @@ static int move_mount_to_tmp(const char *rootfs, const char *tmp_dir, const char
 	_cleanup_free_ char *src = NULL;
 	_cleanup_free_ char *dest = NULL;
 	_cleanup_free_ char *post = NULL;
-	const char *ptr = NULL;
 
 	rc = asprintf(&src, "%s/%s", rootfs, mount_dir);
 	if (rc < 0) {
@@ -337,7 +336,6 @@ static int move_mounts(const char *rootfs,
 		       char *options
 	) {
 
-	int rc = -1;
 	char mount_dir[PATH_MAX];
 	snprintf(mount_dir, PATH_MAX, "%s%s", rootfs, path);
 
@@ -601,8 +599,6 @@ static int prestart(const char *rootfs,
 }
 
 static int poststop(const char *rootfs,
-		const char *id,
-		int pid,
 		const char **config_mounts,
 		unsigned config_mounts_len)
 {
@@ -740,8 +736,6 @@ int main(int argc, char *argv[])
 	const char **config_mounts = NULL;
 	unsigned config_mounts_len = 0;
 
-	const char *linux_path[] = { "linux", (const char *)0 };
-
 	if (!docker) {
 		/* Extract values from the config json */
 		const char *mount_label_path[] = { "linux", "mountLabel", (const char *)0 };
@@ -854,7 +848,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	} else if ((argc > 2 && !strcmp("poststop", argv[1])) || (target_pid == 0)) {
-		if (poststop(rootfs, id, target_pid, config_mounts, config_mounts_len) != 0) {
+		if (poststop(rootfs, config_mounts, config_mounts_len) != 0) {
 			return EXIT_FAILURE;
 		}
 	} else {
