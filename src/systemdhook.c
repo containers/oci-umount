@@ -286,7 +286,7 @@ static bool contains_mount(const char **config_mounts, unsigned len, const char 
 /*
  * Move specified mount to temporary directory
  */
-static int move_mount_to_runtmp(const char *rootfs, const char *run_tmp_dir, const char *mount_dir)
+static int move_mount_to_tmp(const char *rootfs, const char *tmp_dir, const char *mount_dir, int offset)
 {
 	int rc;
 	_cleanup_free_ char *src = NULL;
@@ -301,16 +301,14 @@ static int move_mount_to_runtmp(const char *rootfs, const char *run_tmp_dir, con
 	}
 
 	/* Find the second '/' to get the postfix */
-	ptr = strchr(mount_dir, '/');
-	ptr++;
-	ptr = strchr(ptr, '/');
-	post = strdup(ptr);
+	post = strdup(&mount_dir[offset]);
+
 	if (!post) {
 		pr_perror("Failed to allocate memory for postfix");
 		return -1;
 	}
 
-	rc = asprintf(&dest, "%s/%s", run_tmp_dir, post);
+	rc = asprintf(&dest, "%s/%s", tmp_dir, post);
 	if (rc < 0) {
 		pr_perror("Failed to allocate memory for dest");
 		return -1;
@@ -332,56 +330,75 @@ static int move_mount_to_runtmp(const char *rootfs, const char *run_tmp_dir, con
 	return 0;
 }
 
-#define RUN_PREFIX "/run/"
+static int move_mounts(const char *rootfs,
+		       const char *path,
+		       const char **config_mounts,
+		       unsigned config_mounts_len,
+		       char *options
+	) {
 
-/*
- * Move the mounts under /run to temporary directory under /tmp (on the host)
- */
-static int adjust_run_mounts(const char *rootfs,
-		 const char *run_tmp_dir,
-		 const char **config_mounts,
-		 unsigned len)
-{
 	int rc = -1;
-	struct stat secrets_st = {0};
-	struct stat run_st = {0};
-	_cleanup_free_ char *run_secrets_dir = NULL;
-	_cleanup_free_ char *run_dir = NULL;
+	char mount_dir[PATH_MAX];
+	snprintf(mount_dir, PATH_MAX, "%s%s", rootfs, path);
 
-	rc = asprintf(&run_dir, "%s/%s", rootfs, "run");
-	if (rc < 0) {
-		pr_perror("Failed to allocate memory for run_dir");
+	/* Create a temporary directory to move the PATH mounts to */
+	char temp_template[] = "/tmp/ocitmp.XXXXXX";
+
+	char *tmp_dir = mkdtemp(temp_template);
+	if (tmp_dir == NULL) {
+		pr_perror("Failed to create temporary directory for mounts");
 		return -1;
 	}
 
-	rc = asprintf(&run_secrets_dir, "%s/%s", rootfs, "run/secrets");
-	if (rc < 0) {
-		pr_perror("Failed to allocate memory for run_secrets_dir");
-		return -1;
-	}
+	/* Create the PATH directory */
+	if (!contains_mount(config_mounts, config_mounts_len, path)) {
+		if (mkdir(mount_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir: %s", mount_dir);
+				return -1;
+			}
+		}
 
-	/* Move /run/secrets to temporary directory if it exists and it is a mountpoint */
-	if (stat(run_dir, &run_st) == 0 &&
-	    stat(run_secrets_dir, &secrets_st) == 0 &&
-	    secrets_st.st_rdev != run_st.st_rdev &&
-	    (S_ISDIR(secrets_st.st_mode))) {
-		if (move_mount_to_runtmp(rootfs, run_tmp_dir, "/run/secrets") < 0) {
-			pr_perror("Failed to move %s to %s", run_secrets_dir, run_tmp_dir);
+		/* Mount tmpfs at new temp directory */
+		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
+			pr_perror("Failed to mount tmpfs at %s", tmp_dir);
+			return -1;
+		}
+
+		/* Special case for /run/secrets which will not be in the 
+		   config_mounts */
+		if (strcmp("/run", path) == 0) {
+			if (move_mount_to_tmp(rootfs, tmp_dir, "/run/secrets", strlen(path)) < 0) {
+				if (errno != EINVAL) {
+					pr_perror("Failed to move secrets dir");
+					return -1;
+				}
+			}
+		}
+
+		/* Move other user specified mounts under PATH to temporary directory */
+		for (unsigned i = 0; i < config_mounts_len; i++) {
+			/* Match destinations that begin with PATH */
+			if (!strncmp(path, config_mounts[i], strlen(path))) {
+				if (move_mount_to_tmp(rootfs, tmp_dir, config_mounts[i], strlen(path)) < 0) {
+					pr_perror("Failed to move %s to %s", config_mounts[i], tmp_dir);
+					return -1;
+				}
+			}
+		}
+
+		/* Move temporary directory to PATH */
+		if ((mount(tmp_dir, mount_dir, "", MS_MOVE, "") == -1)) {
+			pr_perror("Failed to move mount %s to %s", tmp_dir, mount_dir);
 			return -1;
 		}
 	}
 
-	/* Move other user specified mounts under /run to temporary directory */
-	for (unsigned i = 0; i < len; i++) {
-		/* Match destinations that begin with /run/ */
-		if (!strncmp(RUN_PREFIX, config_mounts[i], strlen(RUN_PREFIX))) {
-			if (move_mount_to_runtmp(rootfs, run_tmp_dir, config_mounts[i]) < 0) {
-				pr_perror("Failed to move %s to %s", config_mounts[i], run_tmp_dir);
-				return -1;
-			}
-		}
+	/* Remove the temp directory for PATH */
+	if (rmdir(tmp_dir) < 0) {
+		pr_perror("Failed to remove %s", tmp_dir);
+		return -1;
 	}
-
 	return 0;
 }
 
@@ -419,60 +436,19 @@ static int prestart(const char *rootfs,
 		return -1;
 	}
 
-	char run_dir[PATH_MAX];
-	snprintf(run_dir, PATH_MAX, "%s/run", rootfs);
-
-	/* Create a temporary directory to move the /run mounts to */
-	char temp_template[] = "/tmp/runtmp.XXXXXX";
-
-	char *run_tmp_dir = mkdtemp(temp_template);
-	if (run_tmp_dir == NULL) {
-		pr_perror("Failed to create temporary directory for /run mounts");
+	if (!strcmp("", mount_label)) {
+		rc = asprintf(&options, "mode=755,size=65536k");
+	} else {
+		rc = asprintf(&options, "mode=755,size=65536k,context=\"%s\"", mount_label);
+	}
+	if (rc < 0) {
+		pr_perror("Failed to allocate memory for context");
 		return -1;
 	}
 
-	/* Create the /run directory */
-	if (!contains_mount(config_mounts, config_mounts_len, "/run")) {
-		if (mkdir(run_dir, 0755) == -1) {
-			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir: %s", run_dir);
-				return -1;
-			}
-		}
-
-		if (!strcmp("", mount_label)) {
-			rc = asprintf(&options, "mode=755,size=65536k");
-		} else {
-			rc = asprintf(&options, "mode=755,size=65536k,context=\"%s\"", mount_label);
-		}
-		if (rc < 0) {
-			pr_perror("Failed to allocate memory for context");
-			return -1;
-		}
-
-		/* Mount tmpfs at new temp directory */
-		if (mount("tmpfs", run_tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
-			pr_perror("Failed to mount tmpfs at %s", run_tmp_dir);
-			return -1;
-		}
-
-		/* Adjust the mount hierarchy under /run */
-		if (adjust_run_mounts(rootfs, run_tmp_dir, config_mounts, config_mounts_len) < 0) {
-			pr_perror("Failed to set hierarchy under /run");
-			return -1;
-		}
-
-		/* Move temporary directory to /run */
-		if ((mount(run_tmp_dir, run_dir, "", MS_MOVE, "") == -1)) {
-			pr_perror("Failed to move mount %s to %s", run_tmp_dir, run_dir);
-			return -1;
-		}
-	}
-
-	/* Remove the temp directory for /run */
-	if (rmdir(run_tmp_dir) < 0) {
-		pr_perror("Failed to remove %s", run_tmp_dir);
-		return -1;
+	rc = move_mounts(rootfs, "/run", config_mounts, config_mounts_len, options);
+	if (rc < 0) {
+		return rc;
 	}
 
 	_cleanup_free_ char *memory_cgroup_path = NULL;
@@ -517,40 +493,13 @@ static int prestart(const char *rootfs,
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
 
-	/* Create the /tmp directory */
-	if (!contains_mount(config_mounts, config_mounts_len, "/tmp")) {
-		if (mkdir(tmp_dir, 0755) == -1) {
-			if (errno != EEXIST) {
-				pr_perror("Failed to mkdir: %s", tmp_dir);
-				return -1;
-			}
-		}
-
-		if (!strcmp("", mount_label)) {
-			rc = asprintf(&options, "mode=1777%s", memory_str);
-		} else {
-			rc = asprintf(&options, "mode=1777%s,context=\"%s\"", memory_str, mount_label);
-		}
-		if (rc < 0) {
-			pr_perror("Failed to allocate memory for context");
-			return -1;
-		}
-
-		/* Mount tmpfs at /tmp for systemd */
-		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
-			pr_perror("Failed to mount tmpfs at /tmp");
-			return -1;
-		}
-	}
-
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
-		char tmp_dir[PATH_MAX];
-		snprintf(tmp_dir, PATH_MAX, "%s/var/log", rootfs);
 		/* Mount tmpfs at /var/log for systemd */
-		if (mount("tmpfs", tmp_dir, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
-			pr_perror("Failed to mount tmpfs at /var/log");
-			return -1;
+		rc = move_mounts(rootfs, "/var/log", config_mounts, config_mounts_len, options);
+		if (rc < 0) {
+			return rc;
 		}
+
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
 		char cont_journal_dir[PATH_MAX];
@@ -580,6 +529,33 @@ static int prestart(const char *rootfs,
 		/* Mount journal directory at /var/log/journal in the container */
 		if (bind_mount(journal_dir, cont_journal_dir, false) == -1) {
 			return -1;
+		}
+	}
+
+	/* Create the /tmp directory */
+	if (!contains_mount(config_mounts, config_mounts_len, "/tmp")) {
+		if (mkdir(tmp_dir, 0755) == -1) {
+			if (errno != EEXIST) {
+				pr_perror("Failed to mkdir: %s", tmp_dir);
+				return -1;
+			}
+		}
+
+		free(options); options=NULL;
+		if (!strcmp("", mount_label)) {
+			rc = asprintf(&options, "mode=1777%s", memory_str);
+		} else {
+			rc = asprintf(&options, "mode=1777%s,context=\"%s\"", memory_str, mount_label);
+		}
+		if (rc < 0) {
+			pr_perror("Failed to allocate memory for context");
+			return -1;
+		}
+
+		/* Mount tmpfs at /tmp for systemd */
+		rc = move_mounts(rootfs, "/tmp", config_mounts, config_mounts_len, options);
+		if (rc < 0) {
+			return rc;
 		}
 	}
 
