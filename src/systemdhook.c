@@ -367,7 +367,7 @@ static int move_mounts(const char *rootfs,
 		   config_mounts */
 		if (strcmp("/run", path) == 0) {
 			if (move_mount_to_tmp(rootfs, tmp_dir, "/run/secrets", strlen(path)) < 0) {
-				if (errno != EINVAL) {
+				if (errno != EINVAL && errno != ENOENT) {
 					pr_perror("Failed to move secrets dir");
 					return -1;
 				}
