@@ -180,9 +180,9 @@ static int mount_cgroup(struct libmnt_table *tb,
 					return -1;
 				}
 			}
-			/* Running systemd in a container requires you to 
-			   mount all cgroup file systems readonly except 
-			   /sys/fs/cgroup/systemd 
+			/* Running systemd in a container requires you to
+			   mount all cgroup file systems readonly except
+			   /sys/fs/cgroup/systemd
 			*/
 			int readonly = (strcmp(src,"/sys/fs/cgroup/systemd") != 0);
 			if (bind_mount(src, dest, readonly) < 0) {
@@ -363,7 +363,7 @@ static int move_mounts(const char *rootfs,
 			return -1;
 		}
 
-		/* Special case for /run/secrets which will not be in the 
+		/* Special case for /run/secrets which will not be in the
 		   config_mounts */
 		if (strcmp("/run", path) == 0) {
 			if (move_mount_to_tmp(rootfs, tmp_dir, "/run/secrets", strlen(path)) < 0) {
@@ -492,16 +492,13 @@ static int prestart(const char *rootfs,
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
 
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
-		/* Mount tmpfs at /var/log for systemd */
-		rc = move_mounts(rootfs, "/var/log", config_mounts, config_mounts_len, options);
-		if (rc < 0) {
-			return rc;
-		}
-
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
-		char cont_journal_dir[PATH_MAX];
-		snprintf(cont_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
+		char cont_log_journal_dir[PATH_MAX];
+		snprintf(cont_log_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
+		char cont_run_journal_dir[PATH_MAX];
+		snprintf(cont_run_journal_dir, PATH_MAX, "%s/run/journal/%.32s", rootfs, id);
+		char *cont_journal_dir = cont_log_journal_dir;
 		if (makepath(journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir journal dir: %s", journal_dir);
@@ -517,8 +514,11 @@ static int prestart(const char *rootfs,
 			}
 		}
 
-		if (makepath(cont_journal_dir, 0755) == -1) {
-			if (errno != EEXIST) {
+		if ((makepath(cont_journal_dir, 0755) == -1) && (errno != EEXIST)) {
+			pr_pinfo("Failed to mkdir container journal dir: %s; Attempting journal on %s", cont_journal_dir, cont_run_journal_dir);
+			/* Attempt to mount on /run instead */
+			cont_journal_dir = cont_run_journal_dir;
+			if ((makepath(cont_journal_dir, 0755) == -1) && (errno != EEXIST)) {
 				pr_perror("Failed to mkdir container journal dir: %s", cont_journal_dir);
 				return -1;
 			}
