@@ -494,11 +494,8 @@ static int prestart(const char *rootfs,
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
-		char cont_log_journal_dir[PATH_MAX];
-		snprintf(cont_log_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
-		char cont_run_journal_dir[PATH_MAX];
-		snprintf(cont_run_journal_dir, PATH_MAX, "%s/run/journal/%.32s", rootfs, id);
-		char *cont_journal_dir = cont_log_journal_dir;
+		char cont_journal_dir[PATH_MAX];
+		snprintf(cont_journal_dir, PATH_MAX, "%s/var/log/journal", rootfs);
 		if (makepath(journal_dir, 0755) == -1) {
 			if (errno != EEXIST) {
 				pr_perror("Failed to mkdir journal dir: %s", journal_dir);
@@ -514,17 +511,33 @@ static int prestart(const char *rootfs,
 			}
 		}
 
-		if ((makepath(cont_journal_dir, 0755) == -1) && (errno != EEXIST)) {
-			pr_pinfo("Failed to mkdir container journal dir: %s; Attempting journal on %s", cont_journal_dir, cont_run_journal_dir);
-			/* Attempt to mount on /run instead */
-			cont_journal_dir = cont_run_journal_dir;
-			if ((makepath(cont_journal_dir, 0755) == -1) && (errno != EEXIST)) {
-				pr_perror("Failed to mkdir container journal dir: %s", cont_journal_dir);
-				return -1;
+		/* Attempt to creare /var/log/journal inside of rootfs,
+		   if successful, or directory exists, mount tmpfs on top of
+		   it, so that systemd can write journal to it, even in
+		   read/only images
+		*/
+		if ((makepath(cont_journal_dir, 0755) == 0) ||
+		    (errno == EEXIST)) {
+			snprintf(cont_journal_dir, PATH_MAX, "%s%s", rootfs, journal_dir);
+			/* Mount tmpfs at /var/log/journal for systemd */
+			rc = move_mounts(rootfs, "/var/log/journal", config_mounts, config_mounts_len, options);
+			if (rc < 0) {
+				return rc;
 			}
+		} else {
+			/* If you can't create /var/log/journal inside of rootfs,
+			   crate /run/journal instead, systemd should write here
+			   if it is not allowed to write to /var/log/journal
+			*/
+			snprintf(cont_journal_dir, PATH_MAX, "%s/run/journal/%.32s", rootfs, id);
+		}
+		if ((makepath(cont_journal_dir, 0755) == -1) &&
+		    (errno != EEXIST)) {
+			pr_perror("Failed to mkdir container journal dir: %s", cont_journal_dir);
+			return -1;
 		}
 
-		/* Mount journal directory at /var/log/journal in the container */
+		/* Mount journal directory at cont_journal_dir path in the container */
 		if (bind_mount(journal_dir, cont_journal_dir, false) == -1) {
 			return -1;
 		}
