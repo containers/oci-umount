@@ -363,17 +363,6 @@ static int move_mounts(const char *rootfs,
 			return -1;
 		}
 
-		/* Special case for /run/secrets which will not be in the
-		   config_mounts */
-		if (strcmp("/run", path) == 0) {
-			if (move_mount_to_tmp(rootfs, tmp_dir, "/run/secrets", strlen(path)) < 0) {
-				if (errno != EINVAL && errno != ENOENT) {
-					pr_perror("Failed to move secrets dir");
-					return -1;
-				}
-			}
-		}
-
 		/* Move other user specified mounts under PATH to temporary directory */
 		for (unsigned i = 0; i < config_mounts_len; i++) {
 			/* Match destinations that begin with PATH */
@@ -631,8 +620,6 @@ static int poststop(const char *rootfs,
 	return ret;
 }
 
-#define DOCKER_CONTAINER "docker"
-
 int main(int argc, char *argv[])
 {
 	size_t rd;
@@ -642,7 +629,6 @@ int main(int argc, char *argv[])
 	char stateData[CONFIGSZ];
 	char configData[CONFIGSZ];
 	_cleanup_fclose_ FILE *fp = NULL;
-	bool docker = false;
 
 	stateData[0] = 0;
 	errbuf[0] = 0;
@@ -694,28 +680,14 @@ int main(int argc, char *argv[])
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
-	const char *ctr = getenv("container");
-	if (ctr && !strncmp(ctr, DOCKER_CONTAINER, strlen(DOCKER_CONTAINER))) {
-		docker = true;
-	}
-
-	if (docker) {
-		if (argc < 3) {
-			pr_perror("cannot find config file to use");
-			return EXIT_FAILURE;
-		}
-
-		fp = fopen(argv[2], "r");
-	} else {
-		/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
-		   If it is not specified, then check that it is specified on the command line.  */
-		const char *bundle_path[] = { "bundlePath", (const char *)0 };
-		yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
-		if (v_bundle_path) {
-			char config_file_name[PATH_MAX];
-			sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
-			fp = fopen(config_file_name, "r");
-		}
+	/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
+	   If it is not specified, then check that it is specified on the command line.  */
+	const char *bundle_path[] = { "bundlePath", (const char *)0 };
+	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
+	if (v_bundle_path) {
+		char config_file_name[PATH_MAX];
+		sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
+		fp = fopen(config_file_name, "r");
 	}
 
 
@@ -744,105 +716,74 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	char *cmd = NULL;
 	char *mount_label = NULL;
 	const char **config_mounts = NULL;
 	unsigned config_mounts_len = 0;
 
-	if (!docker) {
-		/* Extract values from the config json */
-		const char *mount_label_path[] = { "linux", "mountLabel", (const char *)0 };
-		yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
-		mount_label = v_mount ? YAJL_GET_STRING(v_mount) : "";
+	/* Extract values from the config json */
+	const char *mount_label_path[] = { "linux", "mountLabel", (const char *)0 };
+	yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
+	mount_label = v_mount ? YAJL_GET_STRING(v_mount) : "";
 
-		const char *mount_points_path[] = {"mounts", (const char *)0 };
-		yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
-		if (!v_mounts) {
-			pr_perror("mounts not found in config");
+	const char *mount_points_path[] = {"mounts", (const char *)0 };
+	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
+	if (!v_mounts) {
+		pr_perror("mounts not found in config");
+		return EXIT_FAILURE;
+	}
+
+	config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
+	config_mounts = malloc (sizeof(char *) * (config_mounts_len + 1));
+	if (! config_mounts) {
+		pr_perror("error malloc'ing");
+		return EXIT_FAILURE;
+	}
+
+	for (unsigned int i = 0; i < config_mounts_len; i++) {
+		yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
+
+		const char *destination_path[] = {"destination", (const char *)0 };
+		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
+		if (!v_destination) {
+			pr_perror("Cannot find mount destination");
 			return EXIT_FAILURE;
 		}
+		config_mounts[i] = YAJL_GET_STRING(v_destination);
+	}
 
-		config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
-		config_mounts = malloc (sizeof(char *) * (config_mounts_len + 1));
-		if (! config_mounts) {
-			pr_perror("error malloc'ing");
-			return EXIT_FAILURE;
-		}
+	const char *args_path[] = {"process", "args", (const char *)0 };
+	yajl_val v_args = yajl_tree_get(config_node, args_path, yajl_t_array);
+	if (!v_args) {
+		pr_perror("args not found in config");
+		return EXIT_FAILURE;
+	}
 
-		for (unsigned int i = 0; i < config_mounts_len; i++) {
-			yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
-
-			const char *destination_path[] = {"destination", (const char *)0 };
-			yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
-			if (!v_destination) {
-				pr_perror("Cannot find mount destination");
-				return EXIT_FAILURE;
-			}
-			config_mounts[i] = YAJL_GET_STRING(v_destination);
-		}
-
-		const char *args_path[] = {"process", "args", (const char *)0 };
-		yajl_val v_args = yajl_tree_get(config_node, args_path, yajl_t_array);
-		if (!v_args) {
-			pr_perror("args not found in config");
-			return EXIT_FAILURE;
-		}
-		yajl_val v_arg0_value = YAJL_GET_ARRAY(v_args)->values[0];
-		cmd = YAJL_GET_STRING(v_arg0_value);
-
-		const char *envs[] = {"process", "env", (const char *)0 };
-		yajl_val v_envs = yajl_tree_get(config_node, envs, yajl_t_array);
-		if (v_envs) {
-			for (unsigned int i = 0; i < YAJL_GET_ARRAY(v_envs)->len; i++) {
-				yajl_val v_env = YAJL_GET_ARRAY(v_envs)->values[i];
-				char *str = YAJL_GET_STRING(v_env);
-				if (strncmp (str, "container_uuid=", strlen ("container_uuid=")) == 0) {
-					id = strdup (str + strlen ("container_uuid="));
-					/* systemd expects $container_uuid= to be an UUID but then treat it as
-					   not containing any '-'.  Do the same here.  */
-					char *to = id;
-					for (char *from = to; *from; from++) {
+	const char *envs[] = {"process", "env", (const char *)0 };
+	yajl_val v_envs = yajl_tree_get(config_node, envs, yajl_t_array);
+	if (v_envs) {
+		for (unsigned int i = 0; i < YAJL_GET_ARRAY(v_envs)->len; i++) {
+			yajl_val v_env = YAJL_GET_ARRAY(v_envs)->values[i];
+			char *str = YAJL_GET_STRING(v_env);
+			if (strncmp (str, "container_uuid=", strlen ("container_uuid=")) == 0) {
+				id = strdup (str + strlen ("container_uuid="));
+				/* systemd expects $container_uuid= to be an UUID but then treat it as
+				   not containing any '-'.  Do the same here.  */
+				char *to = id;
+				for (char *from = to; *from; from++) {
 					if (*from != '-')
 						*to++ = *from;
-					}
-					*to = '\0';
 				}
+				*to = '\0';
 			}
 		}
-	} else {
-		/* Handle the Docker case here.  */
-
-		/* Extract values from the config json */
-		const char *mount_label_path[] = { "MountLabel", (const char *)0 };
-		yajl_val v_mount = yajl_tree_get(config_node, mount_label_path, yajl_t_string);
-		if (!v_mount) {
-			pr_perror("MountLabel not found in config");
-			return EXIT_FAILURE;
-		}
-		mount_label = YAJL_GET_STRING(v_mount);
-
-		/* Extract values from the config json */
-		const char *mount_points_path[] = { "MountPoints", (const char *)0 };
-		yajl_val v_mps = yajl_tree_get(config_node, mount_points_path, yajl_t_object);
-		if (!v_mps) {
-			pr_perror("MountPoints not found in config");
-			return EXIT_FAILURE;
-		}
-
-		config_mounts = YAJL_GET_OBJECT(v_mps)->keys;
-		config_mounts_len = YAJL_GET_OBJECT(v_mps)->len;
-
-		const char *cmd_path[] = { "Path", (const char *)0 };
-		yajl_val v_cmd = yajl_tree_get(config_node, cmd_path, yajl_t_string);
-		if (!v_cmd) {
-			pr_perror("Path not found in config");
-			return EXIT_FAILURE;
-		}
-		cmd = YAJL_GET_STRING(v_cmd);
 	}
 
 #if ARGS_CHECK
-	/* Don't do anything if init is actually docker bind mounted /dev/init */
+	char *cmd = NULL;
+	yajl_val v_arg0_value = YAJL_GET_ARRAY(v_args)->values[0];
+	cmd = YAJL_GET_STRING(v_arg0_value);
+
+	/* Don't do anything if init is actually container runtime bind mounted /dev/init */
 	if (!strcmp(cmd, "/dev/init")) {
 		pr_pdebug("Skipping as container command is /dev/init, not systemd init\n");
 		return EXIT_SUCCESS;
