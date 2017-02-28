@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sched.h>
 #include <unistd.h>
@@ -83,6 +84,7 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define CONFIGSZ 65536
 
 #define CGROUP_ROOT "/sys/fs/cgroup"
+#define CGROUP_SYSTEMD CGROUP_ROOT"/systemd"
 
 static int makepath(char *dir, mode_t mode)
 {
@@ -114,83 +116,28 @@ static int bind_mount(const char *src, const char *dest, int readonly) {
 	return 0;
 }
 
-/* error callback */
-static int parser_errcb(struct libmnt_table *tb __attribute__ ((__unused__)),
-			const char *filename, int line)
-{
-	pr_perror("%s: parse error at line %d", filename, line);
-	return 0;
-}
-
-static struct libmnt_table *parse_tabfile(const char *path)
-{
-	int rc;
-	struct libmnt_table *tb = mnt_new_table();
-
-	if (!tb) {
-		pr_perror("failed to initialize libmount table");
-		return NULL;
-	}
-
-	mnt_table_set_parser_errcb(tb, parser_errcb);
-
-	rc = mnt_table_parse_file(tb, path);
-
-	if (rc) {
-		mnt_free_table(tb);
-		pr_perror("can't read %s", path);
-		return NULL;
-	}
-	return tb;
-}
-
-/* reads filesystems from @tb (libmount) looking for cgroup file systems
-   then bind mounts these file systems over rootfs
- */
-static int mount_cgroup(struct libmnt_table *tb,
-			struct libmnt_fs *fs,
-			const char *rootfs)
-{
-	_cleanup_mnt_fs_ struct libmnt_fs *chld = NULL;
-	_cleanup_mnt_iter_ struct libmnt_iter *itr = NULL;
-
-	if (!fs) {
-		/* first call, get root FS */
-		if (mnt_table_get_root_fs(tb, &fs))
-			return -1;
-
-	}
-
-	itr = mnt_new_iter(MNT_ITER_FORWARD);
-	if (!itr)
-		return -1;
-
-	/*
-	 * add all children to the output table
-	 */
-	while (mnt_table_next_child_fs(tb, itr, fs, &chld) == 0) {
-		const char *src = mnt_fs_get_target(chld);
-		if (strncmp(src, CGROUP_ROOT, strlen(CGROUP_ROOT)) == 0) {
-			char dest[PATH_MAX];
-			snprintf(dest, PATH_MAX, "%s%s", rootfs, src);
-
-			if (makepath(dest, 0755) == -1) {
-				if (errno != EEXIST) {
-					pr_perror("Failed to mkdir container cgroup dir: %s", dest);
-					return -1;
-				}
-			}
-			/* Running systemd in a container requires you to
-			   mount all cgroup file systems readonly except
-			   /sys/fs/cgroup/systemd
-			*/
-			int readonly = (strcmp(src,"/sys/fs/cgroup/systemd") != 0);
-			if (bind_mount(src, dest, readonly) < 0) {
+static int chcon(const char *path, const char *label) {
+	DIR *dir;
+	struct dirent *ent;
+	if ((dir = opendir (path)) != NULL) {
+		/* print all the files and directories within directory */
+		while ((ent = readdir (dir)) != NULL) {
+			_cleanup_free_ char *full_path = NULL;
+			if (asprintf(&full_path, "%s/%s", path, ent->d_name) < 0) {
+				pr_perror("Failed to create path for chcon");
+				closedir(dir);
 				return -1;
+
+			}
+			if (setfilecon (full_path, label) < 0) {
+				pr_perror("Failed to set context %s on %s", label, path);
 			}
 		}
-		if (mount_cgroup(tb, chld, rootfs))
-			return -1;
+		closedir (dir);
+	} else {
+		/* could not open directory */
+		pr_perror("Failed to set labels on %s", path);
+		return -1;
 	}
 	return 0;
 }
@@ -259,7 +206,14 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 				return NULL;
 			}
 			pr_pdebug("PATH: %s", path);
-			rc = asprintf(&subsystem_path, "%s/%s%s", CGROUP_ROOT, subsystem, path);
+			const char *subpath = strchr(subsystem, '=');
+			if (subpath == NULL) {
+				subpath = subsystem;
+			} else {
+				subpath++;
+			}
+
+			rc = asprintf(&subsystem_path, "%s/%s%s", CGROUP_ROOT, subpath, path);
 			if (rc < 0) {
 				pr_perror("Failed to allocate memory for subsystemd path");
 				return NULL;
@@ -271,6 +225,39 @@ static char *get_process_cgroup_subsystem_path(int pid, const char *subsystem) {
 	}
 
 	return NULL;
+}
+
+/*
+   Mount a tmpfs on the /sys/fs/systemd directory inside of container.
+   Create a systemd subdir
+   Remount the tmpfs read/only
+ */
+static int mount_cgroup(const char *rootfs, const char *options, char *systemd_path)
+{
+	_cleanup_free_ char *cgroup_path = NULL;
+
+	if (asprintf(&cgroup_path, "%s/%s", rootfs, CGROUP_ROOT) < 0) {
+		pr_perror("Failed to create path for %s", CGROUP_ROOT);
+		return -1;
+	}
+	if ((makepath(cgroup_path, 0755) == -1) && (errno != EEXIST)) {
+		pr_perror("Failed to mkdir new dest: %s", cgroup_path);
+		return -1;
+	}
+	/* Mount tmpfs at new cgroup directory */
+	if (mount("tmpfs", cgroup_path, "tmpfs", MS_NODEV|MS_NOSUID, options) == -1) {
+		pr_perror("Failed to mount tmpfs at %s", cgroup_path);
+		return -1;
+	}
+	if ((makepath(systemd_path, 0755) == -1) && (errno != EEXIST)) {
+		pr_perror("Failed to mkdir new dest: %s", systemd_path);
+		return -1;
+	}
+	if (mount(cgroup_path, cgroup_path, "bind", MS_REMOUNT|MS_BIND|MS_RDONLY, "") == -1) {
+		pr_perror("Failed to remount %s readonly", cgroup_path);
+		return -1;
+	}
+	return 0;
 }
 
 static bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
@@ -480,6 +467,10 @@ static int prestart(const char *rootfs,
 	char tmp_dir[PATH_MAX];
 	snprintf(tmp_dir, PATH_MAX, "%s/tmp", rootfs);
 
+	/*
+	   Create a /var/log/journal directory on the host and mount it into
+	   the container.
+	*/
 	if (!contains_mount(config_mounts, config_mounts_len, "/var/log/journal")) {
 		char journal_dir[PATH_MAX];
 		snprintf(journal_dir, PATH_MAX, "/var/log/journal/%.32s", id);
@@ -559,28 +550,55 @@ static int prestart(const char *rootfs,
 		}
 	}
 
-	if (!contains_mount(config_mounts, config_mounts_len, "/sys/fs/cgroup")) {
-		/* libmount */
-		struct libmnt_table *tb = NULL;
-		int rc = -1;
+	/*
+	 * initialize libmount
+	 */
 
-		/*
-		 * initialize libmount
-		 */
-		mnt_init_debug(0);
+	/*
+	   if CGROUP_ROOT is not bind mounted, we need to create a tmpfs on
+	   it, and then create the systemd directory underneath it
+	*/
 
-		tb = parse_tabfile("/proc/self/mountinfo");
-		if (!tb) {
-			return -1;
-		}
-
-		rc = mount_cgroup(tb, NULL, rootfs);
-		mnt_free_table(tb);
-		if (rc == -1) {
+	_cleanup_free_ char *systemd_path = NULL;
+	if (asprintf(&systemd_path, "%s/%s", rootfs, CGROUP_SYSTEMD) < 0) {
+		pr_perror("Failed to create path for %s", CGROUP_ROOT);
+		return -1;
+	}
+	if (!contains_mount(config_mounts, config_mounts_len, CGROUP_ROOT)) {
+		rc = mount_cgroup(rootfs, options, systemd_path);
+	} else {
+		if ((makepath(systemd_path, 0755) == -1) && (errno != EEXIST)) {
+			pr_perror("Failed to mkdir new dest: %s", systemd_path);
 			return -1;
 		}
 	}
 
+	if (bind_mount(CGROUP_SYSTEMD, systemd_path, true)) {
+		pr_perror("Failed to bind mount %s on %s", CGROUP_SYSTEMD, systemd_path);
+		return -1;
+	}
+
+	/*
+	   Mount the writable systemd hierarchy into the container
+	*/
+	_cleanup_free_ char *named_path = NULL;
+	named_path = get_process_cgroup_subsystem_path(pid, "name=systemd");
+	_cleanup_free_ char *systemd_named_path = NULL;
+	if (asprintf(&systemd_named_path, "%s/%s", rootfs, named_path) < 0) {
+		pr_perror("Failed to create path for %s/%s", rootfs, systemd_named_path);
+		return -1;
+	}
+	if (bind_mount(named_path, systemd_named_path, false)) {
+		pr_perror("Failed to bind mount %s on %s", CGROUP_SYSTEMD, systemd_named_path);
+		return -1;
+	}
+	if (chcon(systemd_named_path, mount_label) < 0) {
+		return -1;
+	}
+
+	/*
+	   Create /etc/machine-id if it does not exist
+	*/
 	if (!contains_mount(config_mounts, config_mounts_len, "/etc/machine-id")) {
 		char mid_path[PATH_MAX];
 		snprintf(mid_path, PATH_MAX, "%s/etc/machine-id", rootfs);
@@ -782,7 +800,6 @@ int main(int argc, char *argv[])
 	char *cmd = NULL;
 	yajl_val v_arg0_value = YAJL_GET_ARRAY(v_args)->values[0];
 	cmd = YAJL_GET_STRING(v_arg0_value);
-
 	/* Don't do anything if init is actually container runtime bind mounted /dev/init */
 	if (!strcmp(cmd, "/dev/init")) {
 		pr_pdebug("Skipping as container command is /dev/init, not systemd init\n");
