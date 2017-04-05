@@ -31,9 +31,10 @@ RUN dnf -y install httpd; dnf -y update; dnf clean all; systemctl enable httpd; 
 CMD [ "/sbin/init" ]
 ```
 
-You should be able to execute the following command:
+You should then be able to execute the following commands:
 
 ```
+docker build –t httpd .
 docker run -ti --stop-signal=RTMIN+3 httpd
 ```
 
