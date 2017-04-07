@@ -34,7 +34,7 @@ CMD [ "/sbin/init" ]
 You should then be able to execute the following commands:
 
 ```
-docker build –t httpd .
+docker build -t httpd .
 docker run -ti --stop-signal=RTMIN+3 httpd
 ```
 
