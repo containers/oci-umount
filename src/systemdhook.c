@@ -706,8 +706,11 @@ int main(int argc, char *argv[])
 	const char *bundle_path[] = { "bundlePath", (const char *)0 };
 	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
 	if (v_bundle_path) {
-		sprintf(config_file_name, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
+		snprintf(config_file_name, PATH_MAX, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
 		fp = fopen(config_file_name, "r");
+	} else {
+		char msg[] = "bundlePath not found in state";
+		snprintf(config_file_name, PATH_MAX, "%s", msg);
 	}
 
 	/* Parse the config file */
