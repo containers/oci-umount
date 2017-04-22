@@ -638,6 +638,90 @@ static int poststop(const char *rootfs,
 	return ret;
 }
 
+/*
+ * Read the entire content of stream pointed to by 'from' into a buffer in memory.
+ * Return a pointer to the resulting NULL-terminated string.
+ */
+char *getJSONstring(FILE *from, size_t chunksize, char *msg)
+{
+	struct stat stat_buf;
+	char *err = NULL, *JSONstring = NULL;
+	size_t nbytes, bufsize;
+
+	if (fstat(fileno(from), &stat_buf) == -1) {
+		err = "fstat failed";
+		goto fail;
+	}
+
+	if (S_ISREG(stat_buf.st_mode)) {
+		/*
+		 * If 'from' is a regular file, allocate a buffer based
+		 * on the file size and read the entire content with a
+		 * single fread() call.
+		 */
+		if (stat_buf.st_size == 0) {
+			err = "is empty";
+			goto fail;
+		}
+
+		bufsize = (size_t)stat_buf.st_size;
+
+		JSONstring = (char *)malloc(bufsize + 1);
+		if (JSONstring == NULL) {
+			err = "failed to allocate buffer";
+			goto fail;
+		}
+
+		nbytes = fread((void *)JSONstring, 1, (size_t)bufsize, from);
+		if (nbytes != (size_t)bufsize) {
+			err = "error encountered on read";
+			goto fail;
+		}
+	} else {
+		/*
+		 * If 'from' is not a regular file, call fread() iteratively
+		 * to read sections of 'chunksize' bytes until EOF is reached.
+		 * Call realloc() during each iteration to expand the buffer
+		 * as needed.
+		 */
+		bufsize = 0;
+
+		for (;;) {
+			JSONstring = (char *)realloc((void *)JSONstring, bufsize + chunksize);
+			if (JSONstring == NULL) {
+				err = "failed to allocate buffer";
+				goto fail;
+			}
+
+			nbytes = fread((void *)&JSONstring[bufsize], 1, (size_t)chunksize, from);
+			bufsize += nbytes;
+
+			if (nbytes != (size_t)chunksize) {
+				if (ferror(from)) {
+					err = "error encountered on read";
+					goto fail;
+				}
+				if (feof(from))
+					break;
+			}
+		}
+
+		JSONstring = (char *)realloc((void *)JSONstring, bufsize + 1);
+		if (JSONstring == NULL) {
+			err = "failed to allocate buffer";
+			goto fail;
+		}
+	}
+
+	/* make sure the string is NULL-terminated */
+	JSONstring[bufsize] = 0;
+	return JSONstring;
+fail:
+	free(JSONstring);
+	pr_perror("%s: %s", msg, err);
+	return NULL;
+}
+
 int main(int argc, char *argv[])
 {
 	size_t rd;
