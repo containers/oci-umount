@@ -724,15 +724,12 @@ fail:
 
 int main(int argc, char *argv[])
 {
-	size_t rd;
 	_cleanup_(yajl_tree_freep) yajl_val node = NULL;
 	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
 	char errbuf[BUFLEN];
 	char *stateData;
-	char config_file_name[PATH_MAX];
 	char *configData;
-	off_t configData_size;
-	struct stat configData_stat;
+	char config_file_name[PATH_MAX];
 	_cleanup_fclose_ FILE *fp = NULL;
 
 	memset(errbuf, 0, BUFLEN);
@@ -793,38 +790,19 @@ int main(int argc, char *argv[])
 		snprintf(config_file_name, PATH_MAX, "%s", msg);
 	}
 
-	/* Parse the config file */
-
 	if (fp == NULL) {
 		pr_perror("Failed to open config file: %s", config_file_name);
 		return EXIT_FAILURE;
 	}
 
-	if (fstat(fileno(fp), &configData_stat) == -1) {
-		pr_perror("Failed to determine size of config file: %s", config_file_name);
-		return EXIT_FAILURE;
-	}
-	if (configData_stat.st_size == 0) {
-		pr_perror("config file %s is empty", config_file_name);
-		return EXIT_FAILURE;
-	}
-	configData_size = configData_stat.st_size;
-
-	configData = (char *)malloc((size_t)configData_size+1);
+	/* Read the entire config file */
+	configData = getJSONstring(fp, (size_t)CHUNKSIZE, "config data");
 	if (configData == NULL) {
-		pr_perror("Failed to allocate buffer for config data: size=%ld", configData_size+1);
+		pr_perror("failed to read config data from %s", config_file_name);
 		return EXIT_FAILURE;
 	}
 
-	rd = fread((void *)configData, 1, (size_t)configData_size, fp);
-	if (rd != (size_t)configData_size) {
-		pr_perror("error encountered on config file read");
-		return EXIT_FAILURE;
-	}
-
-	pr_pdebug("parse %ld bytes of config data from file %s", configData_size, config_file_name);
-
-	configData[configData_size] = 0; /* make sure the JSON string is NULL-terminated */
+	/* Parse the config file */
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
 		pr_perror("parse_error: ");
