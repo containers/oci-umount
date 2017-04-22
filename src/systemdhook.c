@@ -81,7 +81,7 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define pr_pdebug(fmt, ...) syslog(LOG_DEBUG, "systemdhook <debug>: " fmt "\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
-#define CONFIGSZ 65536
+#define CHUNKSIZE 4096
 
 #define CGROUP_ROOT "/sys/fs/cgroup"
 #define CGROUP_SYSTEMD CGROUP_ROOT"/systemd"
@@ -728,23 +728,19 @@ int main(int argc, char *argv[])
 	_cleanup_(yajl_tree_freep) yajl_val node = NULL;
 	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
 	char errbuf[BUFLEN];
-	char stateData[CONFIGSZ];
+	char *stateData;
 	char config_file_name[PATH_MAX];
 	char *configData;
 	off_t configData_size;
 	struct stat configData_stat;
 	_cleanup_fclose_ FILE *fp = NULL;
 
-	memset(stateData, 0, CONFIGSZ);
 	memset(errbuf, 0, BUFLEN);
 
-	/* Read the entire config file from stdin */
-	rd = fread((void *)stateData, 1, sizeof(stateData) - 1, stdin);
-	if (rd == 0 && !feof(stdin)) {
-		pr_perror("Error encountered on file read");
-		return EXIT_FAILURE;
-	} else if (rd >= sizeof(stateData) - 1) {
-		pr_perror("Config file too big");
+	/* Read the entire state from stdin */
+	stateData = getJSONstring(stdin, (size_t)CHUNKSIZE, "state data");
+	if (stateData == NULL) {
+		pr_perror("failed to read state data from standard input");
 		return EXIT_FAILURE;
 	}
 
