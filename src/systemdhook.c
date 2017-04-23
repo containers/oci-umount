@@ -706,6 +706,11 @@ char *getJSONstring(FILE *from, size_t chunksize, char *msg)
 			}
 		}
 
+		if (bufsize == 0) {
+			err = "is empty";
+			goto fail;
+		}
+
 		JSONstring = (char *)realloc((void *)JSONstring, bufsize + 1);
 		if (JSONstring == NULL) {
 			err = "failed to allocate buffer";
