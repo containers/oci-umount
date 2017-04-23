@@ -781,8 +781,7 @@ int main(int argc, char *argv[])
 	}
 	char *id = YAJL_GET_STRING(v_id);
 
-	/* bundle_path must be specified for the OCI hooks, and from there we read the configuration file.
-	   If it is not specified, then check that it is specified on the command line.  */
+	/* 'bundlePath' must be specified for the OCI hooks, and from there we read the configuration file */
 	const char *bundle_path[] = { "bundlePath", (const char *)0 };
 	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
 	if (v_bundle_path) {
