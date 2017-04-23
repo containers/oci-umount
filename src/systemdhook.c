@@ -737,16 +737,14 @@ int main(int argc, char *argv[])
 	char config_file_name[PATH_MAX];
 	_cleanup_fclose_ FILE *fp = NULL;
 
-	memset(errbuf, 0, BUFLEN);
-
 	/* Read the entire state from stdin */
-	stateData = getJSONstring(stdin, (size_t)CHUNKSIZE, "state data");
-	if (stateData == NULL) {
-		pr_perror("failed to read state data from standard input");
+	snprintf(errbuf, BUFLEN, "failed to read state data from standard input");
+	stateData = getJSONstring(stdin, (size_t)CHUNKSIZE, errbuf);
+	if (stateData == NULL)
 		return EXIT_FAILURE;
-	}
 
 	/* Parse the state */
+	memset(errbuf, 0, BUFLEN);
 	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
 		pr_perror("parse_error: ");
@@ -801,13 +799,13 @@ int main(int argc, char *argv[])
 	}
 
 	/* Read the entire config file */
-	configData = getJSONstring(fp, (size_t)CHUNKSIZE, "config data");
-	if (configData == NULL) {
-		pr_perror("failed to read config data from %s", config_file_name);
+	snprintf(errbuf, BUFLEN, "failed to read config data from %s", config_file_name);
+	configData = getJSONstring(fp, (size_t)CHUNKSIZE, errbuf);
+	if (configData == NULL)
 		return EXIT_FAILURE;
-	}
 
 	/* Parse the config file */
+	memset(errbuf, 0, BUFLEN);
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
 		pr_perror("parse_error: ");
