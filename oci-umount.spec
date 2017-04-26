@@ -1,17 +1,17 @@
 %global provider        github
 %global provider_tld    com
 %global project         projectatomic
-%global repo            oci-systemd-hook
+%global repo            oci-umount
 # https://github.com/projectatomic/oci-register-machine
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
 %global commit          de345df3c18a6abfc8d9cf3822405c0e1bbe65c9
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
-Name:           oci-systemd-hook
-Version:        0.1.4
+Name:           oci-umount
+Version:        0.1
 Release:        1.git%{shortcommit}%{?dist}
-Summary:        OCI systemd hook for docker
+Summary:        OCI umount hook for docker
 Group:          Applications/Text
 License:        GPLv3+
 URL:            https://%{provider_prefix}
@@ -25,7 +25,8 @@ BuildRequires:  pkgconfig(mount)
 BuildRequires:  golang-github-cpuguy83-go-md2man
 
 %description
-OCI systemd hooks enable running systemd in a OCI runc/docker container.
+OCI umount hooks unmount potential leaked mount points in a containers
+mount namespaces
 
 %prep
 %setup -q -n %{repo}-%{commit}
@@ -41,20 +42,13 @@ make %{?_smp_mflags}
 #define license tag if not already defined
 %{!?_licensedir:%global license %doc}
 %files
-%{_libexecdir}/oci/hooks.d/oci-systemd-hook
-%{_mandir}/man1/oci-systemd-hook.1*
+%{_libexecdir}/oci/hooks.d/oci-umount
+%{_mandir}/man1/oci-umount.1*
 %doc README.md
 %license LICENSE
 %dir /%{_libexecdir}/oci
 %dir /%{_libexecdir}/oci/hooks.d
 
 %changelog
-* Thu Feb 18 2016 Dan Walsh <dwalsh@redhat.com> - 0.1.4-1.gitde345df
-- Fix up to prepare for review
-
-* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.3
-- Fix bug in man page installation
-* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.2
-- Add man pages
-* Mon Nov 23 2015 Mrunal Patel <mrunalp@gmail.com> - 0.1.1
+* Wed May 17 2017 Dan Walsh <dwalsh@redhat.com> - 0.1.1
 - Initial RPM release

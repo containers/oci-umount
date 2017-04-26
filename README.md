@@ -1,60 +1,34 @@
-# OCI systemd hooks
-==============
-OCI systemd hook enables users to run systemd in docker and [OCI](https://github.com/opencontainers/specs) compatible runtimes such as runc without requiring `--privileged` flag.
+## OCI Umount
 
-This project produces a C binary that can be used with runc and Docker (with minor code changes).
-If you clone this branch and build/install `oci-systemd-hook`, a binary should be placed in
-`/usr/libexec/oci/hooks.d` named `oci-systemd-hook`.
+`oci-umount` is a OCI hook program that will umount any file systems listed in /etc/oci-umount.conf
+file before starting a container.  The goal with this tool is to help prevent container mount
+space leaking into other containers.
 
-Running Docker or OCI runc containers with this executable, oci-systemd-hook is called just before a container is started and after it is provisioned.  If the CMD to run inside of the container is `init` or `systemd`, this hook will configure the container image to run a systemd environment.  For all other CMD's, this hook will just exit.
 
-When oci-systemd-hook detects systemd inside of the container it does the following:
+This project produces a golang that can be used with container runtimes and runc (with minor code changes).
+If you clone this branch and build/install `umount.go`, a binary will be placed in
+`/usr/libexec/oci/hooks.d` named `oci-umount`. You can change this location by
+editing `HOOKSDIR` in the Makefile.
 
-* Mounts a tmpfs on /run and /tmp
--  If there is content in the container image's /run and /tmp that content will be copied onto the tmpfs.
-* Creates a /etc/machine-id based on the the containers UUID
-* Mounts the hosts /sys/fs/cgroups file systemd read-only into the container
-- /sys/fs/cgroup/systemd will be mounted read/write into the container.
 
-When the container stops, these file systems will be umounted.
+With minor changes to upstream docker code, this binary will be executed when starting a
+containers via prestart hooks.  
 
-systemd is expected to be able to run within the container without requiring
-the `--privileged` option.  However you will still need to specify a special `--stop-signal`.  Standard docker containers sends SIGTERM to pid 1, but systemd
-does not shut down properly when it recieves a SIGTERM.  systemd specified that it needs to receive a RTMIN+3 signal to shutdown properly.
+Running runc containers with this executable, oci-umount() is called
+just before a container is started and after it is provisioned.
 
-If you created a container image based on a dockerfile like the following:
-```
-cat Dockerfile
-FROM fedora:latest
-ENV container docker
-RUN dnf -y install httpd; dnf -y update; dnf clean all; systemctl enable httpd; systemctl disable dnf-makecache.timer dnf-makecache.service
-CMD [ "/sbin/init" ]
-```
-
-You should then be able to execute the following commands:
-
-```
-docker build -t httpd .
-docker run -ti --stop-signal=RTMIN+3 httpd
-```
-
-If you run this hook along with oci-register-machine oci hook, you will be able
-to show the containers journal information on the host, using journalctl.
-
-```
-journalctl -M CONTAINER_UUID
-```
+This doc assumes you are running at least docker version 1.12 with the dockerhooks patch.
+Also, place this project in your `GOPATH`.
 
 
 To build, install, clean-up:
 
-First, **clone** this branch, then:
+First, **clone** this branch in your `GOPATH`, then:
 
-```
-git clone https://github.com/projectatomic/oci-systemd-hook
-cd oci-systemd-hook
-autoreconf -i
-./configure --libexecdir=/usr/libexec/oci/hooks.d
-make
-make install
-```
+`make build`
+
+
+`make install`
+
+
+`make clean`
