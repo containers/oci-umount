@@ -141,6 +141,17 @@ static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_s
 }
 
 
+/* Get mount destination given the source, from config data */
+static char *get_config_mount_dest(const struct config_mount_info *config_mounts, unsigned len, char *source)
+{
+	for (unsigned i = 0; i < len; i++) {
+		if (!strcmp(source, config_mounts[i].source)) {
+			return config_mounts[i].destination;
+		}
+	}
+	return NULL;
+}
+
 static int parse_mountinfo(struct mount_info **info, size_t *sz)
 {
 	_cleanup_fclose_ FILE *fp;
@@ -222,6 +233,53 @@ static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz
 	}
 	return false;
 }
+
+/* Returns <0 on error, 0 when no mapping exists and 1 when mapping exists */
+static int map_mount_host_to_container(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char *cont_mnt, unsigned max_dest_len)
+{
+	char *str, *rem_host_mnt;
+	_cleanup_free_ char *host_mnt_dup = NULL;
+	char *destination = NULL;
+	int dest_len;
+
+	host_mnt_dup = strdup(host_mnt);
+	if (!host_mnt_dup) {
+		pr_perror("strdup(%s) failed.\n", host_mnt);
+		return -1;
+	}
+
+	str = host_mnt_dup;
+	do {
+		destination = get_config_mount_dest(config_mounts, config_mounts_len, str);
+		if (destination)
+			break;
+		if (!strcmp(str, "/"))
+			break;
+	} while ((str = dirname(str)));
+
+	if (!destination)
+		return 0;
+
+	dest_len = strlen(destination);
+	rem_host_mnt = host_mnt + strlen(str);
+
+	if (dest_len + strlen(rem_host_mnt)  + 1 > max_dest_len - 1) {
+		pr_perror("Not enough space to store mapped string\n");
+		return -1;
+	}
+
+	*cont_mnt = '\0';
+	strcat(cont_mnt, destination);
+	if (rem_host_mnt[0] != '\0') {
+		if (destination[dest_len - 1] != '/' && rem_host_mnt[0] != '/')
+			strcat(cont_mnt, "/");
+		strcat(cont_mnt, rem_host_mnt);
+	}
+
+	pr_pinfo("mapped host_mnt=%s to cont_mnt=%s\n", host_mnt, cont_mnt);
+	return 1;
+}
+
 
 static int prestart(const char *rootfs,
 		int pid,
@@ -308,7 +366,20 @@ static int prestart(const char *rootfs,
 	}
 
 	for (i = 0; i < nr_umounts; i++) {
-		snprintf(umount_path, PATH_MAX, "%s/%s%s", rootfs, "host", mounts_on_host[i]);
+		char mapped_path[PATH_MAX];
+
+		ret = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i], mapped_path, PATH_MAX);
+		if (ret < 0) {
+			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			continue;
+		}
+
+		if (!ret) {
+			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			continue;
+		}
+
+		snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_path);
 
 		if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
 			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
