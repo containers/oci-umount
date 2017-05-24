@@ -118,16 +118,6 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define BUFLEN 1024
 #define CHUNKSIZE 4096
 
-static bool contains_mount(const struct config_mount_info *config_mounts, unsigned len, const char *mount) {
-	for (unsigned i = 0; i < len; i++) {
-		if (!strcmp(mount, config_mounts[i].destination)) {
-			pr_pdebug("%s already present as a mount point in container configuration, skipping\n", mount);
-			return true;
-		}
-	}
-	return false;
-}
-
 static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_sz) {
 	void *table;
 
