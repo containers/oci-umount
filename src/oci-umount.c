@@ -81,11 +81,28 @@ static inline void free_cptr_array(char ***p) {
 	free(ptr);
 }
 
+static inline void free_config_mounts(struct config_mount_info **p) {
+	unsigned i;
+	struct config_mount_info *cm = *p;
+
+	if (cm == NULL)
+		return;
+
+	for (i = 0; cm[i].destination || cm[i].source; i++) {
+		if (cm[i].destination)
+			free(cm[i].destination);
+		if (cm[i].source)
+			free(cm[i].source);
+	}
+	free(cm);
+}
+
 #define _cleanup_free_ _cleanup_(freep)
 #define _cleanup_close_ _cleanup_(closep)
 #define _cleanup_fclose_ _cleanup_(fclosep)
 #define _cleanup_mnt_info_ _cleanup_(free_mnt_info)
 #define _cleanup_cptr_array_ _cleanup_(free_cptr_array)
+#define _cleanup_config_mounts_ _cleanup_(free_config_mounts)
 
 #define DEFINE_CLEANUP_FUNC(type, func)                         \
 	static inline void func##p(type *p) {                   \
@@ -459,15 +476,118 @@ fail:
 	return NULL;
 }
 
+static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, size_t *mounts_len)
+{
+	yajl_val node = *node_ptr;
+	char config_file_name[PATH_MAX];
+	char errbuf[BUFLEN];
+	char *configData;
+	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
+	_cleanup_config_mounts_ struct config_mount_info *config_mounts = NULL;
+	unsigned config_mounts_len = 0;
+	_cleanup_fclose_ FILE *fp = NULL;
+
+	/* 'bundlePath' must be specified for the OCI hooks, and from there we read the configuration file */
+	const char *bundle_path[] = { "bundlePath", (const char *)0 };
+	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
+	if (v_bundle_path) {
+		snprintf(config_file_name, PATH_MAX, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
+		fp = fopen(config_file_name, "r");
+	} else {
+		char msg[] = "bundlePath not found in state";
+		snprintf(config_file_name, PATH_MAX, "%s", msg);
+	}
+
+	if (fp == NULL) {
+		pr_perror("Failed to open config file: %s", config_file_name);
+		return EXIT_FAILURE;
+	}
+
+	/* Read the entire config file */
+	snprintf(errbuf, BUFLEN, "failed to read config data from %s", config_file_name);
+	configData = getJSONstring(fp, (size_t)CHUNKSIZE, errbuf);
+	if (configData == NULL)
+		return EXIT_FAILURE;
+
+	/* Parse the config file */
+	memset(errbuf, 0, BUFLEN);
+	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
+	if (config_node == NULL) {
+		pr_perror("parse_error: ");
+		if (strlen(errbuf)) {
+			pr_perror(" %s", errbuf);
+		} else {
+			pr_perror("unknown error");
+		}
+		return EXIT_FAILURE;
+	}
+
+	/* Extract values from the config json */
+	const char *mount_points_path[] = {"mounts", (const char *)0 };
+	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
+	if (!v_mounts) {
+		pr_perror("mounts not found in config");
+		return EXIT_FAILURE;
+	}
+
+	config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
+	/* Allocate one extra element which will be set to 0 and be used as
+	 * end of array in free function */
+	config_mounts = malloc(sizeof(struct config_mount_info) * (config_mounts_len + 1));
+	if (!config_mounts) {
+		pr_perror("error malloc'ing");
+		return EXIT_FAILURE;
+	}
+
+	memset(config_mounts, 0, sizeof(struct config_mount_info) * (config_mounts_len + 1));
+
+	for (unsigned int i = 0; i < config_mounts_len; i++) {
+		yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
+
+		const char *destination_path[] = {"destination", (const char *)0 };
+		const char *source_path[] = {"source", (const char *)0 };
+
+		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
+		if (!v_destination) {
+			pr_perror("cannot find mount destination");
+			return EXIT_FAILURE;
+		}
+		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
+		if (!config_mounts[i].destination) {
+			pr_perror("strdup() failed.\n");
+			return EXIT_FAILURE;
+		}
+
+		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
+		if (!v_source) {
+			pr_perror("Cannot find mount source");
+			return EXIT_FAILURE;
+		}
+		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
+		if (!config_mounts[i].source) {
+			pr_perror("strdup() failed.\n");
+			return EXIT_FAILURE;
+		}
+	}
+
+	*mounts = config_mounts;
+	*mounts_len = config_mounts_len;
+	/* set it NULL so that gcc cleanup function does not try to free this */
+	config_mounts = NULL;
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	_cleanup_(yajl_tree_freep) yajl_val node = NULL;
 	_cleanup_(yajl_tree_freep) yajl_val config_node = NULL;
 	char errbuf[BUFLEN];
 	char *stateData;
-	char *configData;
-	char config_file_name[PATH_MAX];
 	_cleanup_fclose_ FILE *fp = NULL;
+	int ret;
+	_cleanup_config_mounts_ struct config_mount_info *config_mounts = NULL;
+	size_t config_mounts_len = 0;
 
 	/* Read the entire state from stdin */
 	snprintf(errbuf, BUFLEN, "failed to read state data from standard input");
@@ -505,90 +625,13 @@ int main(int argc, char *argv[])
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
 
-	/* 'bundlePath' must be specified for the OCI hooks, and from there we read the configuration file */
-	const char *bundle_path[] = { "bundlePath", (const char *)0 };
-	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
-	if (v_bundle_path) {
-		snprintf(config_file_name, PATH_MAX, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
-		fp = fopen(config_file_name, "r");
-	} else {
-		char msg[] = "bundlePath not found in state";
-		snprintf(config_file_name, PATH_MAX, "%s", msg);
-	}
-
-	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s", config_file_name);
-		return EXIT_FAILURE;
-	}
-
-	/* Read the entire config file */
-	snprintf(errbuf, BUFLEN, "failed to read config data from %s", config_file_name);
-	configData = getJSONstring(fp, (size_t)CHUNKSIZE, errbuf);
-	if (configData == NULL)
-		return EXIT_FAILURE;
-
-	/* Parse the config file */
-	memset(errbuf, 0, BUFLEN);
-	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
-	if (config_node == NULL) {
-		pr_perror("parse_error: ");
-		if (strlen(errbuf)) {
-			pr_perror(" %s", errbuf);
-		} else {
-			pr_perror("unknown error");
-		}
-		return EXIT_FAILURE;
-	}
-
-	struct config_mount_info *config_mounts = NULL;
-	unsigned config_mounts_len = 0;
-
-	/* Extract values from the config json */
-	const char *mount_points_path[] = {"mounts", (const char *)0 };
-	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
-	if (!v_mounts) {
-		pr_perror("mounts not found in config");
-		return EXIT_FAILURE;
-	}
-
-	config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
-	config_mounts = malloc (sizeof(struct config_mount_info) * (config_mounts_len));
-	if (!config_mounts) {
-		pr_perror("error malloc'ing");
-		return EXIT_FAILURE;
-	}
-
-	for (unsigned int i = 0; i < config_mounts_len; i++) {
-		yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
-
-		const char *destination_path[] = {"destination", (const char *)0 };
-		const char *source_path[] = {"source", (const char *)0 };
-
-		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
-		if (!v_destination) {
-			pr_perror("Cannot find mount destination");
-			return EXIT_FAILURE;
-		}
-		config_mounts[i].destination = YAJL_GET_STRING(v_destination);
-
-		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
-		if (!v_source) {
-			pr_perror("Cannot find mount source");
-			return EXIT_FAILURE;
-		}
-		config_mounts[i].source = YAJL_GET_STRING(v_source);
-	}
-
-	const char *args_path[] = {"process", "args", (const char *)0 };
-	yajl_val v_args = yajl_tree_get(config_node, args_path, yajl_t_array);
-	if (!v_args) {
-		pr_perror("args not found in config");
-		return EXIT_FAILURE;
-	}
-
 	/* OCI hooks set target_pid to 0 on poststop, as the container process already
 	   exited.  If target_pid is bigger than 0 then it is the prestart hook.  */
 	if ((argc > 2 && !strcmp("prestart", argv[1])) || target_pid) {
+		ret = parseBundle(&node, &config_mounts, &config_mounts_len);
+		if (ret < 0)
+			return EXIT_FAILURE;
+
 		if (prestart(rootfs, target_pid, config_mounts, config_mounts_len) != 0) {
 			return EXIT_FAILURE;
 		}
