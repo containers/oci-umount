@@ -34,6 +34,12 @@ struct mount_info {
 	char *destination;
 };
 
+/* Basic config mount info */
+struct config_mount_info {
+	char *source;
+	char *destination;
+};
+
 static inline void freep(void *p) {
 	free(*(void**) p);
 }
@@ -112,9 +118,9 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define BUFLEN 1024
 #define CHUNKSIZE 4096
 
-static bool contains_mount(const char **config_mounts, unsigned len, const char *mount) {
+static bool contains_mount(const struct config_mount_info *config_mounts, unsigned len, const char *mount) {
 	for (unsigned i = 0; i < len; i++) {
-		if (!strcmp(mount, config_mounts[i])) {
+		if (!strcmp(mount, config_mounts[i].destination)) {
 			pr_pdebug("%s already present as a mount point in container configuration, skipping\n", mount);
 			return true;
 		}
@@ -219,7 +225,7 @@ static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz
 
 static int prestart(const char *rootfs,
 		int pid,
-		const char **config_mounts,
+		const struct config_mount_info *config_mounts,
 		unsigned config_mounts_len)
 {
 	pr_pinfo("prestart %s", rootfs);
@@ -489,7 +495,7 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	const char **config_mounts = NULL;
+	struct config_mount_info *config_mounts = NULL;
 	unsigned config_mounts_len = 0;
 
 	/* Extract values from the config json */
@@ -501,8 +507,8 @@ int main(int argc, char *argv[])
 	}
 
 	config_mounts_len = YAJL_GET_ARRAY(v_mounts)->len;
-	config_mounts = malloc (sizeof(char *) * (config_mounts_len + 1));
-	if (! config_mounts) {
+	config_mounts = malloc (sizeof(struct config_mount_info) * (config_mounts_len));
+	if (!config_mounts) {
 		pr_perror("error malloc'ing");
 		return EXIT_FAILURE;
 	}
@@ -511,12 +517,21 @@ int main(int argc, char *argv[])
 		yajl_val v_mounts_values = YAJL_GET_ARRAY(v_mounts)->values[i];
 
 		const char *destination_path[] = {"destination", (const char *)0 };
+		const char *source_path[] = {"source", (const char *)0 };
+
 		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
 		if (!v_destination) {
 			pr_perror("Cannot find mount destination");
 			return EXIT_FAILURE;
 		}
-		config_mounts[i] = YAJL_GET_STRING(v_destination);
+		config_mounts[i].destination = YAJL_GET_STRING(v_destination);
+
+		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
+		if (!v_source) {
+			pr_perror("Cannot find mount source");
+			return EXIT_FAILURE;
+		}
+		config_mounts[i].source = YAJL_GET_STRING(v_source);
 	}
 
 	const char *args_path[] = {"process", "args", (const char *)0 };
