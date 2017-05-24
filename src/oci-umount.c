@@ -24,8 +24,15 @@
 #include <libmount/libmount.h>
 
 #define _cleanup_(x) __attribute__((cleanup(x)))
+
 #define MOUNTCONF "/etc/oci-umount.conf"
-	
+#define MOUNTINFO_PATH "/proc/self/mountinfo"
+#define MAX_UMOUNTS	128	/* Maximum number of unmounts */
+
+/* Basic mount info. For now we need only destination */
+struct mount_info {
+	char *destination;
+};
 
 static inline void freep(void *p) {
 	free(*(void**) p);
@@ -41,6 +48,33 @@ static inline void fclosep(FILE **fp) {
 	if (*fp)
 		fclose(*fp);
 	*fp = NULL;
+}
+
+static inline void free_mnt_info(struct mount_info **p) {
+	unsigned i;
+	struct mount_info *mi = *p;
+
+	if (mi == NULL)
+		return;
+
+	for (i = 0; mi[i].destination; i++) {
+		free(mi[i].destination);
+	}
+	free(mi);
+}
+
+/* Free an array of char pointers */
+static inline void free_cptr_array(char ***p) {
+	unsigned i;
+	char **ptr = *p;
+
+	if (ptr == NULL)
+		return;
+
+	for (i = 0; ptr[i]; i++) {
+		free(ptr[i]);
+	}
+	free(ptr);
 }
 
 static inline void mnt_free_iterp(struct libmnt_iter **itr) {
@@ -60,6 +94,8 @@ static inline void mnt_free_fsp(struct libmnt_fs **itr) {
 #define _cleanup_fclose_ _cleanup_(fclosep)
 #define _cleanup_mnt_iter_ _cleanup_(mnt_free_iterp)
 #define _cleanup_mnt_fs_ _cleanup_(mnt_free_fsp)
+#define _cleanup_mnt_info_ _cleanup_(free_mnt_info)
+#define _cleanup_cptr_array_ _cleanup_(free_cptr_array)
 
 #define DEFINE_CLEANUP_FUNC(type, func)                         \
 	static inline void func##p(type *p) {                   \
@@ -86,6 +122,101 @@ static bool contains_mount(const char **config_mounts, unsigned len, const char 
 	return false;
 }
 
+static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_sz) {
+	void *table;
+
+	table = realloc(curr_table, new_sz);
+	if (!table)
+		return NULL;
+
+	/* Zero newly allocated area */
+	memset(table + curr_sz, 0, (new_sz - curr_sz));
+	return table;
+}
+
+
+static int parse_mountinfo(struct mount_info **info, size_t *sz)
+{
+	_cleanup_fclose_ FILE *fp;
+	_cleanup_mnt_info_ struct mount_info *mnt_table = NULL;
+	struct mount_info *mnt_table_temp;
+	int nr_elem = 64;
+	int elem_sz = sizeof(struct mount_info);
+	/*
+	 * table size bytes also keeps track of last zero element while
+	 * nr_elem does not
+	 */
+	size_t table_sz_bytes = (nr_elem + 1) * elem_sz;
+	_cleanup_free_ char *line = NULL;
+	size_t len = 0;
+	int table_idx = 0;
+
+	fp = fopen(MOUNTINFO_PATH, "r");
+	if (!fp) {
+		pr_perror("Failed to open %s\n", MOUNTINFO_PATH);
+		return -1;
+	}
+
+	/*
+	 * Alaways allocate one member extra at the end and keep it zero so
+	 * that cleanup function can find the end of array.
+	 */
+	mnt_table = (struct mount_info *)realloc(NULL, table_sz_bytes);
+	if (!mnt_table) {
+		pr_perror("Failed to allocate memory for mount tabel\n");
+		return -1;
+	}
+
+	memset(mnt_table, 0, table_sz_bytes);
+
+	while ((getline(&line, &len, fp)) != -1) {
+		char *token, *str = line, *dest;
+		int token_idx = 0;
+
+		while ((token = strtok(str, " ")) != NULL) {
+			str = NULL;
+			token_idx++;
+			if (token_idx != 5)
+			       continue;
+
+			dest = strdup(token);
+			if (!dest) {
+				pr_perror("strdup() failed\n");
+				return -1;
+			}
+
+			mnt_table[table_idx++].destination = dest;
+			if (table_idx == nr_elem) {
+				int new_sz_bytes = table_sz_bytes + elem_sz * 64;
+				mnt_table_temp = grow_mountinfo_table(mnt_table, table_sz_bytes, new_sz_bytes);
+				if (!mnt_table_temp) {
+					pr_perror("Failed to realloc mountinfo table\n");
+					return -1;
+				}
+				mnt_table = mnt_table_temp;
+				table_sz_bytes = new_sz_bytes;
+				nr_elem += 64;
+			}
+		}
+	}
+
+	*info = mnt_table;
+	*sz = table_idx;
+	/* Make sure cleanup function does not free up this table now */
+	mnt_table = NULL;
+	return 0;
+}
+
+static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz) {
+	size_t i;
+
+	for (i = 0; i < table_sz; i++) {
+		if (!strcmp(mnt_table[i].destination, path))
+			return true;
+	}
+	return false;
+}
+
 static int prestart(const char *rootfs,
 		int pid,
 		const char **config_mounts,
@@ -95,56 +226,96 @@ static int prestart(const char *rootfs,
 	_cleanup_close_  int fd = -1;
 	_cleanup_free_   char *options = NULL;
 
+	size_t mnt_table_sz;
+	_cleanup_mnt_info_ struct mount_info *mnt_table = NULL;
+
 	char process_mnt_ns_fd[PATH_MAX];
+	char umount_path[PATH_MAX];
+	_cleanup_fclose_ FILE *fp = NULL;
+	_cleanup_cptr_array_ char **mounts_on_host = NULL;
+	int nr_umounts = 0;
+	_cleanup_free_ char *line = NULL;
+	char *real_path;
+	size_t len = 0;
+	ssize_t read;
+	int i, ret;
+
+	/* Allocate one extra element and keep it zero for cleanup function */
+	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(char *));
+	if (!mounts_on_host) {
+		pr_perror("Failed to malloc memory for mounts_on_host table\n");
+		return EXIT_FAILURE;
+	}
+	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(char *));
+
+	/* Parse oci-umounts.conf file, canonicalize path names and skip
+	 * paths which are not a mountpoint on host */
+	fp = fopen(MOUNTCONF, "r");
+	if (fp == NULL) {
+		pr_perror("Failed to open config file: %s", MOUNTCONF);
+		return EXIT_FAILURE;
+	}
+
+	while ((read = getline(&line, &len, fp)) != -1) {
+		/* Get rid of newline character at the end */
+		line[read - 1] ='\0';
+
+		if (nr_umounts == MAX_UMOUNTS) {
+			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
+			return EXIT_FAILURE;
+		}
+
+		real_path = realpath(line, NULL);
+		if (!real_path) {
+			pr_pinfo("Failed to canonicalize path [%s]. Skipping.", line);
+			continue;
+		}
+
+		mounts_on_host[nr_umounts++] = real_path;
+	}
+
 	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
 
 	fd = open(process_mnt_ns_fd, O_RDONLY);
 	if (fd < 0) {
 		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
-		return -1;
+		return EXIT_FAILURE;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
 		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
-		return -1;
+		return EXIT_FAILURE;
 	}
-	close(fd);
-	fd = -1;
 
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
 		pr_perror("Failed to chdir");
-		return -1;
-	}
-
-	FILE *fp = fopen(MOUNTCONF, "r");
-	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s", MOUNTCONF);
-
 		return EXIT_FAILURE;
 	}
-	char *line=NULL;
-	size_t len;
-	while(getline(&line, &len, fp) != -1) {
-		/*
-		  Create a /var/log/journal directory on the host and mount it into
-		  the container.
-		*/
-		if (contains_mount(config_mounts, config_mounts_len, line)) {
-			int rc = umount(line);
-			if (rc < 0) {
-				pr_perror("Failed to umount: %s", line);
-				return EXIT_FAILURE;
-			}
-		}
+
+	/* Parse mount table */
+	ret = parse_mountinfo(&mnt_table, &mnt_table_sz);
+	if (ret < 0) {
+		pr_perror("Failed to parse mountinfo table\n");
+		return EXIT_FAILURE;
 	}
-	free(line);
 
-	/*
-	 * initialize libmount
-	 */
+	for (i = 0; i < nr_umounts; i++) {
+		snprintf(umount_path, PATH_MAX, "%s/%s%s", rootfs, "host", mounts_on_host[i]);
 
+		if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
+			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+			continue;
+		}
+		ret = umount2(umount_path, MNT_DETACH);
+		if (ret < 0) {
+			pr_perror("Failed to umount: [%s]", umount_path);
+			return EXIT_FAILURE;
+		}
+
+		pr_pinfo("Unmounted %s \n", umount_path);
+	}
 	return 0;
 }
 
