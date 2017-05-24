@@ -7,8 +7,6 @@ oci_umount_CFLAGS = -Wall -Wextra -std=c99 $(YAJL_CFLAGS)
 oci_umount_LDADD = $(YAJL_LIBS)
 oci_umount_CFLAGS += $(SELINUX_CFLAGS)
 oci_umount_LDADD += $(SELINUX_LIBS)
-oci_umount_CFLAGS += $(LIBMOUNT_CFLAGS)
-oci_umount_LDADD += $(LIBMOUNT_LIBS)
 
 dist_man_MANS = oci-umount.1
 EXTRA_DIST = README.md LICENSE

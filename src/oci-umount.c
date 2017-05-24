@@ -21,8 +21,6 @@
 
 #include "config.h"
 
-#include <libmount/libmount.h>
-
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
 #define MOUNTCONF "/etc/oci-umount.conf"
@@ -83,23 +81,9 @@ static inline void free_cptr_array(char ***p) {
 	free(ptr);
 }
 
-static inline void mnt_free_iterp(struct libmnt_iter **itr) {
-	if (*itr)
-		mnt_free_iter(*itr);
-	*itr=NULL;
-}
-
-static inline void mnt_free_fsp(struct libmnt_fs **itr) {
-	if (*itr)
-		mnt_free_fs(*itr);
-	*itr=NULL;
-}
-
 #define _cleanup_free_ _cleanup_(freep)
 #define _cleanup_close_ _cleanup_(closep)
 #define _cleanup_fclose_ _cleanup_(fclosep)
-#define _cleanup_mnt_iter_ _cleanup_(mnt_free_iterp)
-#define _cleanup_mnt_fs_ _cleanup_(mnt_free_fsp)
 #define _cleanup_mnt_info_ _cleanup_(free_mnt_info)
 #define _cleanup_cptr_array_ _cleanup_(free_cptr_array)
 
