@@ -323,7 +323,7 @@ static int prestart(const char *rootfs,
 
 		real_path = realpath(line, NULL);
 		if (!real_path) {
-			pr_pinfo("Failed to canonicalize path [%s]. Skipping.", line);
+			pr_pwarning("Failed to canonicalize path [%s]. Skipping.", line);
 			continue;
 		}
 
@@ -362,19 +362,19 @@ static int prestart(const char *rootfs,
 
 		ret = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i], mapped_path, PATH_MAX);
 		if (ret < 0) {
-			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			pr_pwarning("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
 			continue;
 		}
 
 		if (!ret) {
-			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			pr_pwarning("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
 			continue;
 		}
 
 		snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_path);
 
 		if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
-			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+			pr_pwarning("[%s] is not a mountpoint. Skipping.", umount_path);
 			continue;
 		}
 		ret = umount2(umount_path, MNT_DETACH);
