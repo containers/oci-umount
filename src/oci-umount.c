@@ -308,10 +308,6 @@ static int prestart(const char *rootfs,
 	 * paths which are not a mountpoint on host */
 	fp = fopen(MOUNTCONF, "r");
 	if (fp == NULL) {
-		if (errno == ENOENT) {
-			pr_pwarning("Config file not found: %s", MOUNTCONF);
-			return 0;
-		}
 		pr_perror("Failed to open config file: %s", MOUNTCONF);
 		return EXIT_FAILURE;
 	}
