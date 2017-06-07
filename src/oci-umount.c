@@ -298,7 +298,7 @@ static int prestart(const char *rootfs,
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(char *));
 	if (!mounts_on_host) {
-		pr_perror("Failed to malloc memory for mounts_on_host table\n");
+		pr_perror("Failing hook run. Unable to malloc memory for mounts_on_host table\n");
 		return EXIT_FAILURE;
 	}
 	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(char *));
@@ -307,7 +307,7 @@ static int prestart(const char *rootfs,
 	 * paths which are not a mountpoint on host */
 	fp = fopen(MOUNTCONF, "r");
 	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s", MOUNTCONF);
+		pr_perror("Failing hook run. Unable to open required config file: %s", MOUNTCONF);
 		return EXIT_FAILURE;
 	}
 
@@ -316,7 +316,7 @@ static int prestart(const char *rootfs,
 		line[read - 1] ='\0';
 
 		if (nr_umounts == MAX_UMOUNTS) {
-			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
+			pr_perror("Failing hook run. Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
 			return EXIT_FAILURE;
 		}
 
@@ -333,26 +333,26 @@ static int prestart(const char *rootfs,
 
 	fd = open(process_mnt_ns_fd, O_RDONLY);
 	if (fd < 0) {
-		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
+		pr_perror("Failing hook run. Unable to open mnt namespace fd %s", process_mnt_ns_fd);
 		return EXIT_FAILURE;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
-		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
+		pr_perror("Failing hook run. Failed to setns to %s", process_mnt_ns_fd);
 		return EXIT_FAILURE;
 	}
 
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
-		pr_perror("Failed to chdir");
+		pr_perror("Failing hook run. Unable to chdir");
 		return EXIT_FAILURE;
 	}
 
 	/* Parse mount table */
 	ret = parse_mountinfo(&mnt_table, &mnt_table_sz);
 	if (ret < 0) {
-		pr_perror("Failed to parse mountinfo table\n");
+		pr_perror("Failing hook run. Unable to parse mountinfo table\n");
 		return EXIT_FAILURE;
 	}
 
@@ -378,7 +378,7 @@ static int prestart(const char *rootfs,
 		}
 		ret = umount2(umount_path, MNT_DETACH);
 		if (ret < 0) {
-			pr_perror("Failed to umount: [%s]", umount_path);
+			pr_perror("Failing hook run. Unable to umount: [%s]", umount_path);
 			return EXIT_FAILURE;
 		}
 
@@ -499,7 +499,7 @@ static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, si
 	}
 
 	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s", config_file_name);
+		pr_perror("Failing hook run. Unable to open config file: %s", config_file_name);
 		return EXIT_FAILURE;
 	}
 
@@ -513,7 +513,7 @@ static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, si
 	memset(errbuf, 0, BUFLEN);
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
-		pr_perror("parse_error: ");
+		pr_perror("Failing hook run. parse_error: ");
 		if (strlen(errbuf)) {
 			pr_perror(" %s", errbuf);
 		} else {
@@ -526,7 +526,7 @@ static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, si
 	const char *mount_points_path[] = {"mounts", (const char *)0 };
 	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
 	if (!v_mounts) {
-		pr_perror("mounts not found in config");
+		pr_perror("Failing hook run. mounts not found in config");
 		return EXIT_FAILURE;
 	}
 
@@ -535,7 +535,7 @@ static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, si
 	 * end of array in free function */
 	config_mounts = malloc(sizeof(struct config_mount_info) * (config_mounts_len + 1));
 	if (!config_mounts) {
-		pr_perror("error malloc'ing");
+		pr_perror("Failing hook run. error malloc'ing");
 		return EXIT_FAILURE;
 	}
 
@@ -549,23 +549,23 @@ static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, si
 
 		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
 		if (!v_destination) {
-			pr_perror("cannot find mount destination");
+			pr_perror("Failing hook run. cannot find mount destination");
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
 		if (!config_mounts[i].destination) {
-			pr_perror("strdup() failed.\n");
+			pr_perror("Failing hook run. strdup() failed.\n");
 			return EXIT_FAILURE;
 		}
 
 		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
 		if (!v_source) {
-			pr_perror("Cannot find mount source");
+			pr_perror("Failing hook run. Cannot find mount source");
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
 		if (!config_mounts[i].source) {
-			pr_perror("strdup() failed.\n");
+			pr_perror("Failing hook run. strdup() failed.\n");
 			return EXIT_FAILURE;
 		}
 	}
@@ -599,7 +599,7 @@ int main(int argc, char *argv[])
 	memset(errbuf, 0, BUFLEN);
 	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
-		pr_perror("parse_error: ");
+		pr_perror("Failing hook run. parse_error: ");
 		if (strlen(errbuf)) {
 			pr_perror(" %s", errbuf);
 		} else {
@@ -612,7 +612,7 @@ int main(int argc, char *argv[])
 	const char *root_path[] = { "root", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
 	if (!v_root) {
-		pr_perror("root not found in state");
+		pr_perror("Failing hook run. root not found in state");
 		return EXIT_FAILURE;
 	}
 	char *rootfs = YAJL_GET_STRING(v_root);
@@ -620,7 +620,7 @@ int main(int argc, char *argv[])
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
-		pr_perror("pid not found in state");
+		pr_perror("Failing hook run. pid not found in state");
 		return EXIT_FAILURE;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
@@ -638,7 +638,7 @@ int main(int argc, char *argv[])
 	} else if ((argc > 2 && !strcmp("poststop", argv[1])) || (target_pid == 0)) {
 		return EXIT_SUCCESS;
 	} else {
-		pr_perror("command not recognized: %s", argv[1]);
+		pr_perror("Failing hook run. command not recognized: %s", argv[1]);
 		return EXIT_FAILURE;
 	}
 
