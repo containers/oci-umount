@@ -162,7 +162,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 
 	fp = fopen(MOUNTINFO_PATH, "r");
 	if (!fp) {
-		pr_perror("Failed to open %s %m\n", MOUNTINFO_PATH);
+		pr_perror("Failed to open %s\n", MOUNTINFO_PATH);
 		return -1;
 	}
 
@@ -186,7 +186,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 			str = NULL;
 			token_idx++;
 			if (token_idx != 5)
-				continue;
+			       continue;
 
 			dest = strdup(token);
 			if (!dest) {
@@ -327,7 +327,7 @@ static int prestart(const char *rootfs,
 
 		real_path = realpath(line, NULL);
 		if (!real_path) {
-			pr_pinfo("Failed to canonicalize path [%s]: %m. Skipping.", line);
+			pr_pinfo("Failed to canonicalize path [%s]. Skipping.", line);
 			continue;
 		}
 
@@ -481,7 +481,7 @@ fail:
 	return NULL;
 }
 
-static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_info **mounts, size_t *mounts_len)
+static int parseBundle(yajl_val *node_ptr, struct config_mount_info **mounts, size_t *mounts_len)
 {
 	yajl_val node = *node_ptr;
 	char config_file_name[PATH_MAX];
@@ -492,14 +492,14 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	unsigned config_mounts_len = 0;
 	_cleanup_fclose_ FILE *fp = NULL;
 
-	/* 'bundle' must be specified for the OCI hooks, and from there we read the configuration file */
-	const char *bundle_path[] = { "bundle", (const char *)0 };
+	/* 'bundlePath' must be specified for the OCI hooks, and from there we read the configuration file */
+	const char *bundle_path[] = { "bundlePath", (const char *)0 };
 	yajl_val v_bundle_path = yajl_tree_get(node, bundle_path, yajl_t_string);
 	if (v_bundle_path) {
 		snprintf(config_file_name, PATH_MAX, "%s/config.json", YAJL_GET_STRING(v_bundle_path));
 		fp = fopen(config_file_name, "r");
 	} else {
-		char msg[] = "bundle not found in state";
+		char msg[] = "bundlePath not found in state";
 		snprintf(config_file_name, PATH_MAX, "%s", msg);
 	}
 
@@ -526,15 +526,6 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 		}
 		return EXIT_FAILURE;
 	}
-
-	/* Extract root path from the bundle */
-	const char *root_path[] = { "root", "path", (const char *)0 };
-	yajl_val v_root = yajl_tree_get(config_node, root_path, yajl_t_string);
-	if (!v_root) {
-					pr_perror("root not found in config.json");
-					return EXIT_FAILURE;
-	}
-	*rootfs = YAJL_GET_STRING(v_root);
 
 	/* Extract values from the config json */
 	const char *mount_points_path[] = {"mounts", (const char *)0 };
@@ -622,6 +613,15 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	/* Extract values from the state json */
+	const char *root_path[] = { "root", (const char *)0 };
+	yajl_val v_root = yajl_tree_get(node, root_path, yajl_t_string);
+	if (!v_root) {
+		pr_perror("root not found in state");
+		return EXIT_FAILURE;
+	}
+	char *rootfs = YAJL_GET_STRING(v_root);
+
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
@@ -631,10 +631,9 @@ int main(int argc, char *argv[])
 	int target_pid = YAJL_GET_INTEGER(v_pid);
 
 	/* OCI hooks set target_pid to 0 on poststop, as the container process already
-          exited.  If target_pid is bigger than 0 then it is the prestart hook.  */
+	   exited.  If target_pid is bigger than 0 then it is the prestart hook.  */
 	if ((argc > 2 && !strcmp("prestart", argv[1])) || target_pid) {
-		char *rootfs=NULL;
-		ret = parseBundle(&node, &rootfs, &config_mounts, &config_mounts_len);
+		ret = parseBundle(&node, &config_mounts, &config_mounts_len);
 		if (ret < 0)
 			return EXIT_FAILURE;
 
