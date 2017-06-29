@@ -643,7 +643,7 @@ int main(int argc, char *argv[])
 	   support passing of no argv[1], and then default to prestart if the 
 	   target_pid != 0, poststop if target_pid == 0.
 	*/
-	if ((argc >= 2 && !strcmp("prestart", argv[1])) ||	if ((argc >= 2 && !strcmp("prestart", argv[1])) ||
+	if ((argc >= 2 && !strcmp("prestart", argv[1])) ||
 	    (argc == 1 && target_pid)) {
 		_cleanup_free_ char *rootfs=NULL;
 		ret = parseBundle(&node, &rootfs, &config_mounts, &config_mounts_len);
