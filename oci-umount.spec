@@ -2,10 +2,10 @@
 %global provider_tld    com
 %global project         projectatomic
 %global repo            oci-umount
-# https://github.com/projectatomic/oci-register-machine
+# https://github.com/projectatomic/oci-umount
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
-%global commit          de345df3c18a6abfc8d9cf3822405c0e1bbe65c9
+%global commit          c1345751d063d298f4d38c0ceb661c462f0963a3
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-umount
@@ -46,6 +46,7 @@ make %{?_smp_mflags}
 %{_mandir}/man1/oci-umount.1*
 %doc README.md
 %license LICENSE
+%config(noreplace) %{_sysconfdir}/oci-umount.conf
 %dir /%{_libexecdir}/oci
 %dir /%{_libexecdir}/oci/hooks.d
 
