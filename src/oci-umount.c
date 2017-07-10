@@ -26,6 +26,7 @@
 #define MOUNTCONF "/etc/oci-umount.conf"
 #define MOUNTINFO_PATH "/proc/self/mountinfo"
 #define MAX_UMOUNTS	128	/* Maximum number of unmounts */
+#define MAX_MAPS	128	/* Maximum number of source to dest mappings */
 
 /* Basic mount info. For now we need only destination */
 struct mount_info {
@@ -132,18 +133,6 @@ static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_s
 	return table;
 }
 
-
-/* Get mount destination given the source, from config data */
-static char *get_config_mount_dest(const struct config_mount_info *config_mounts, unsigned len, char *source)
-{
-	for (unsigned i = 0; i < len; i++) {
-		if (!strcmp(source, config_mounts[i].source)) {
-			return config_mounts[i].destination;
-		}
-	}
-	return NULL;
-}
-
 static int parse_mountinfo(struct mount_info **info, size_t *sz)
 {
 	_cleanup_fclose_ FILE *fp;
@@ -226,13 +215,60 @@ static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz
 	return false;
 }
 
-/* Returns <0 on error, 0 when no mapping exists and 1 when mapping exists */
-static int map_mount_host_to_container(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char *cont_mnt, unsigned max_dest_len)
+/* return <0 on failure otherwise 0.  */
+static int map_one_entry(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped, char *suffix, unsigned *nr_mapped) {
+	char *str, *dest;
+	unsigned i;
+	char path[PATH_MAX];
+
+	for (i = 0; i < config_mounts_len; i++) {
+		if (strcmp(host_mnt, config_mounts[i].source))
+			continue;
+
+		dest = config_mounts[i].destination;
+		if ((strlen(dest) + strlen(suffix) + 1 > PATH_MAX)) {
+			pr_perror("Mapped destination=%s and suffix=%s together are longer than PATH_MAX\n", dest, suffix);
+			continue;
+		}
+
+		strcpy(path, config_mounts[i].destination);
+		if (suffix)
+			strcat(path, suffix);
+
+		str = strdup(path);
+		if (!str) {
+			pr_perror("strdup(%s) failed.\n", path);
+			return -1;
+		}
+
+		if (*nr_mapped >= max_mapped) {
+			pr_perror("Mapping array is full (size=%d). Can't add another entry.\n", *nr_mapped);
+			return -1;
+		}
+
+		cont_mnt[*nr_mapped] = str;
+		*nr_mapped += 1;
+	}
+	return 0;
+}
+
+/* Frees up entries of char ptr array entries. Assumes last entry to be null*/
+static void free_char_ptr_array_entries(char **array, unsigned int nr_entries) {
+	for (unsigned i = 0; i < nr_entries; i++) {
+		free(array[i]);
+		array[i] = NULL;
+	}
+}
+
+
+/* Returns <0 on error otherwise number of mappings found  */
+static int map_mount_host_to_container(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped)
 {
-	char *str, *rem_host_mnt;
+	char *str;
 	_cleanup_free_ char *host_mnt_dup = NULL;
-	char *destination = NULL;
-	int dest_len;
+	char *suffix = NULL;
+	int ret;
+	unsigned nr_mapped = 0;
 
 	host_mnt_dup = strdup(host_mnt);
 	if (!host_mnt_dup) {
@@ -242,36 +278,29 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 
 	str = host_mnt_dup;
 	do {
-		destination = get_config_mount_dest(config_mounts, config_mounts_len, str);
-		if (destination)
-			break;
+		ret = map_one_entry(config_mounts, config_mounts_len, str, cont_mnt, max_mapped, suffix, &nr_mapped);
+		if (ret < 0) {
+			free_char_ptr_array_entries(cont_mnt, nr_mapped);
+			return ret;
+		}
+
 		if (!strcmp(str, "/"))
 			break;
-	} while ((str = dirname(str)));
 
-	if (!destination)
-		return 0;
+		str = dirname(str);
 
-	dest_len = strlen(destination);
-	rem_host_mnt = host_mnt + strlen(str);
+		if (!strcmp(str, "/"))
+			suffix = host_mnt;
+		else
+			suffix = host_mnt + strlen(str);
+	} while(1);
 
-	if (dest_len + strlen(rem_host_mnt)  + 1 > max_dest_len - 1) {
-		pr_perror("Not enough space to store mapped string\n");
-		return -1;
+	for (unsigned i = 0; i < nr_mapped; i++) {
+		pr_pinfo("mapped host_mnt=%s to cont_mnt=%s\n", host_mnt, cont_mnt[i]);
 	}
 
-	*cont_mnt = '\0';
-	strcat(cont_mnt, destination);
-	if (rem_host_mnt[0] != '\0') {
-		if (destination[dest_len - 1] != '/' && rem_host_mnt[0] != '/')
-			strcat(cont_mnt, "/");
-		strcat(cont_mnt, rem_host_mnt);
-	}
-
-	pr_pinfo("mapped host_mnt=%s to cont_mnt=%s\n", host_mnt, cont_mnt);
-	return 1;
+	return nr_mapped;
 }
-
 
 static int prestart(const char *rootfs,
 		int pid,
@@ -289,12 +318,13 @@ static int prestart(const char *rootfs,
 	char umount_path[PATH_MAX];
 	_cleanup_fclose_ FILE *fp = NULL;
 	_cleanup_cptr_array_ char **mounts_on_host = NULL;
+	_cleanup_cptr_array_ char **mapped_paths = NULL;
 	int nr_umounts = 0;
 	_cleanup_free_ char *line = NULL;
 	char *real_path;
 	size_t len = 0;
 	ssize_t read;
-	int i, ret;
+	int i, ret, nr_mapped;
 
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(char *));
@@ -303,6 +333,14 @@ static int prestart(const char *rootfs,
 		return EXIT_FAILURE;
 	}
 	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(char *));
+
+	/* Allocate one extra element and keep it zero for cleanup function */
+	mapped_paths = malloc((MAX_MAPS + 1) * sizeof(char *));
+	if (!mapped_paths) {
+		pr_perror("Failed to malloc memory for mapped_paths array\n");
+		return EXIT_FAILURE;
+	}
+	memset((void *)mapped_paths, 0, (MAX_MAPS + 1) * sizeof(char *));
 
 	/* Parse oci-umounts.conf file, canonicalize path names and skip
 	 * paths which are not a mountpoint on host */
@@ -362,32 +400,33 @@ static int prestart(const char *rootfs,
 	}
 
 	for (i = 0; i < nr_umounts; i++) {
-		char mapped_path[PATH_MAX];
-
-		ret = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i], mapped_path, PATH_MAX);
-		if (ret < 0) {
+		nr_mapped = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i], mapped_paths, MAX_MAPS);
+		if (nr_mapped < 0) {
 			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
 			continue;
 		}
 
-		if (!ret) {
+		if (!nr_mapped) {
 			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
 			continue;
 		}
 
-		snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_path);
+		for (int j = 0; j < nr_mapped; j++) {
+			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
 
-		if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
-			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
-			continue;
-		}
-		ret = umount2(umount_path, MNT_DETACH);
-		if (ret < 0) {
-			pr_perror("Failed to umount: [%s]", umount_path);
-			return EXIT_FAILURE;
-		}
+			if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
+				pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+				continue;
+			}
 
-		pr_pinfo("Unmounted %s \n", umount_path);
+			ret = umount2(umount_path, MNT_DETACH);
+			if (ret < 0) {
+				pr_perror("Failed to umount: [%s]", umount_path);
+				return EXIT_FAILURE;
+			}
+			pr_pinfo("Unmounted %s \n", umount_path);
+		}
+		free_char_ptr_array_entries(mapped_paths, nr_mapped);
 	}
 	return 0;
 }
