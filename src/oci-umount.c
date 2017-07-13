@@ -578,7 +578,25 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 		pr_perror("root not found in config.json");
 		return EXIT_FAILURE;
 	}
-	*rootfs=strdup(YAJL_GET_STRING(v_root));
+	char *lrootfs = YAJL_GET_STRING(v_root);
+
+	/* Prepend bundle path if the rootfs string is relative */
+	if (lrootfs[0] == '/') {
+		*rootfs = strdup(lrootfs);
+		if (!*rootfs) {
+			pr_perror("failed to alloc rootfs");
+			return EXIT_FAILURE;
+		}
+	} else {
+		char *new_rootfs;
+
+		asprintf(&new_rootfs, "%s/%s", YAJL_GET_STRING(v_bundle_path), lrootfs);
+		if (!new_rootfs) {
+			pr_perror("failed to alloc rootfs");
+			return EXIT_FAILURE;
+		}
+		*rootfs = new_rootfs;
+	}
 
 	/* Extract values from the config json */
 	const char *mount_points_path[] = {"mounts", (const char *)0 };
