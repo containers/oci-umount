@@ -372,6 +372,9 @@ static int prestart(const char *rootfs,
 		mounts_on_host[nr_umounts++] = real_path;
 	}
 
+	if (!nr_umounts)
+		return 0;
+
 	snprintf(process_mnt_ns_fd, PATH_MAX, "/proc/%d/ns/mnt", pid);
 
 	fd = open(process_mnt_ns_fd, O_RDONLY);
