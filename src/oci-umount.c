@@ -218,15 +218,18 @@ static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz
 /* return <0 on failure otherwise 0.  */
 static int map_one_entry(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped, char *suffix, unsigned *nr_mapped) {
 	char *str, *dest;
-	unsigned i;
+	unsigned i, suffix_len = 0;
 	char path[PATH_MAX];
+
+	if (suffix)
+		suffix_len = strlen(suffix);
 
 	for (i = 0; i < config_mounts_len; i++) {
 		if (strcmp(host_mnt, config_mounts[i].source))
 			continue;
 
 		dest = config_mounts[i].destination;
-		if ((strlen(dest) + strlen(suffix) + 1 > PATH_MAX)) {
+		if ((strlen(dest) + suffix_len + 1 > PATH_MAX)) {
 			pr_perror("Mapped destination=%s and suffix=%s together are longer than PATH_MAX\n", dest, suffix);
 			continue;
 		}
