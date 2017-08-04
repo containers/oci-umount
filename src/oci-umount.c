@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -305,6 +306,23 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 	return nr_mapped;
 }
 
+int comment(const char *line) {
+	int len = strlen(line);
+	for (int i=0; i < len; i++) {
+		if (isspace(line[i])) continue;
+		switch (line[i]) {
+		case '#':
+			return 1;
+			break;
+		default:
+			return 0;
+			break;
+		}
+	}
+	// treat blank lines as comments
+	return 1;
+}
+
 static int prestart(const char *rootfs,
 		int pid,
 		const struct config_mount_info *config_mounts,
@@ -360,6 +378,7 @@ static int prestart(const char *rootfs,
 	while ((read = getline(&line, &len, fp)) != -1) {
 		/* Get rid of newline character at the end */
 		line[read - 1] ='\0';
+		if (comment(line)) continue;
 
 		if (nr_umounts == MAX_UMOUNTS) {
 			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
@@ -370,6 +389,19 @@ static int prestart(const char *rootfs,
 		if (!real_path) {
 			pr_pinfo("Failed to canonicalize path [%s]: %m. Skipping.", line);
 			continue;
+		}
+		/* If a path ends in /, we want to re-add it to the real_path.
+		   This indicates that the admin wants to umount mountpoints
+		   under the path, but not include the path. Paths without the
+		   ending / will be umounted if they are mounted in the
+		   container */
+		if (line[strlen(line)-1] == '/') {
+			char *ptr = NULL;
+			if (asprintf(&ptr, "%s/", real_path) < 0) {
+				pr_perror("Asprintf of real_path failed %m\n");
+				return EXIT_FAILURE;
+			}
+			free(real_path); real_path=ptr;
 		}
 
 		mounts_on_host[nr_umounts++] = real_path;
