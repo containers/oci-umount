@@ -32,6 +32,8 @@
 /* Basic mount info. For now we need only destination */
 struct mount_info {
 	char *destination;
+	unsigned mntid;
+	unsigned parent_mntid;
 };
 
 /* Basic config mount info */
@@ -190,10 +192,16 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 	while ((getline(&line, &len, fp)) != -1) {
 		char *token, *str = line, *dest;
 		int token_idx = 0;
+		unsigned mntid, parent_mntid;
 
+		mntid = parent_mntid = 0;
 		while ((token = strtok(str, " ")) != NULL) {
 			str = NULL;
 			token_idx++;
+			if (token_idx == 1)
+				mntid = atoi(token);
+			if (token_idx == 2)
+				parent_mntid = atoi(token);
 			if (token_idx != 5)
 			       continue;
 
@@ -203,7 +211,10 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 				return -1;
 			}
 
-			mnt_table[table_idx++].destination = dest;
+			mnt_table[table_idx].destination = dest;
+			mnt_table[table_idx].mntid = mntid;
+			mnt_table[table_idx].parent_mntid = parent_mntid;
+			table_idx++;
 			if (table_idx == nr_elem) {
 				int new_sz_bytes = table_sz_bytes + elem_sz * 64;
 				mnt_table_temp = grow_mountinfo_table(mnt_table, table_sz_bytes, new_sz_bytes);
