@@ -18,6 +18,7 @@
 #include <linux/limits.h>
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
+#include <ctype.h>
 
 #include "config.h"
 
@@ -120,6 +121,25 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define BUFLEN 1024
 #define CHUNKSIZE 4096
+
+int iscomment(const char *line) {
+	int len = strlen(line);
+
+	for (int i = 0; i < len; i++) {
+		if (isspace(line[i]))
+			continue;
+
+		switch (line[i]) {
+		case '#':
+			return 1;
+		default:
+			return 0;
+		}
+	}
+
+	// treat blank lines as comments
+	return 1;
+}
 
 static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_sz) {
 	void *table;
@@ -360,6 +380,8 @@ static int prestart(const char *rootfs,
 	while ((read = getline(&line, &len, fp)) != -1) {
 		/* Get rid of newline character at the end */
 		line[read - 1] ='\0';
+		if (iscomment(line))
+			continue;
 
 		if (nr_umounts == MAX_UMOUNTS) {
 			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
