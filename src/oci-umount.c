@@ -18,6 +18,7 @@
 #include <linux/limits.h>
 #include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
+#include <ctype.h>
 
 #include "config.h"
 
@@ -31,12 +32,19 @@
 /* Basic mount info. For now we need only destination */
 struct mount_info {
 	char *destination;
+	unsigned mntid;
+	unsigned parent_mntid;
 };
 
 /* Basic config mount info */
 struct config_mount_info {
 	char *source;
 	char *destination;
+};
+
+struct host_mount_info {
+	char *path;
+	bool submounts_only;
 };
 
 static inline void freep(void *p) {
@@ -66,6 +74,19 @@ static inline void free_mnt_info(struct mount_info **p) {
 		free(mi[i].destination);
 	}
 	free(mi);
+}
+
+static inline void free_host_mounts(struct host_mount_info **p) {
+	unsigned i;
+	struct host_mount_info *hmi = *p;
+
+	if (hmi == NULL)
+		return;
+
+	for (i = 0; hmi[i].path; i++) {
+		free(hmi[i].path);
+	}
+	free(hmi);
 }
 
 /* Free an array of char pointers */
@@ -102,6 +123,7 @@ static inline void free_config_mounts(struct config_mount_info **p) {
 #define _cleanup_close_ _cleanup_(closep)
 #define _cleanup_fclose_ _cleanup_(fclosep)
 #define _cleanup_mnt_info_ _cleanup_(free_mnt_info)
+#define _cleanup_host_mounts_ _cleanup_(free_host_mounts)
 #define _cleanup_cptr_array_ _cleanup_(free_cptr_array)
 #define _cleanup_config_mounts_ _cleanup_(free_config_mounts)
 
@@ -120,6 +142,25 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define BUFLEN 1024
 #define CHUNKSIZE 4096
+
+int iscomment(const char *line) {
+	int len = strlen(line);
+
+	for (int i = 0; i < len; i++) {
+		if (isspace(line[i]))
+			continue;
+
+		switch (line[i]) {
+		case '#':
+			return 1;
+		default:
+			return 0;
+		}
+	}
+
+	// treat blank lines as comments
+	return 1;
+}
 
 static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_sz) {
 	void *table;
@@ -170,10 +211,16 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 	while ((getline(&line, &len, fp)) != -1) {
 		char *token, *str = line, *dest;
 		int token_idx = 0;
+		unsigned mntid, parent_mntid;
 
+		mntid = parent_mntid = 0;
 		while ((token = strtok(str, " ")) != NULL) {
 			str = NULL;
 			token_idx++;
+			if (token_idx == 1)
+				mntid = atoi(token);
+			if (token_idx == 2)
+				parent_mntid = atoi(token);
 			if (token_idx != 5)
 			       continue;
 
@@ -183,7 +230,10 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 				return -1;
 			}
 
-			mnt_table[table_idx++].destination = dest;
+			mnt_table[table_idx].destination = dest;
+			mnt_table[table_idx].mntid = mntid;
+			mnt_table[table_idx].parent_mntid = parent_mntid;
+			table_idx++;
 			if (table_idx == nr_elem) {
 				int new_sz_bytes = table_sz_bytes + elem_sz * 64;
 				mnt_table_temp = grow_mountinfo_table(mnt_table, table_sz_bytes, new_sz_bytes);
@@ -305,6 +355,50 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 	return nr_mapped;
 }
 
+/* Returns 0 on success, negative error otherwise */
+static int unmount(char *umount_path, bool submounts_only, const struct mount_info *mnt_table, size_t table_sz)
+{
+	int ret;
+	unsigned i;
+	unsigned mntid = 0;
+	bool found_mnt = false;
+
+	if (!submounts_only) {
+		ret = umount2(umount_path, MNT_DETACH);
+		if (!ret)
+			pr_pinfo("Unmounted: [%s]\n", umount_path);
+		else
+			pr_perror("Failed to unmount: [%s]\n", umount_path);
+		return ret;
+	}
+
+	/* Unmount submounts only */
+	for (i = 0; i < table_sz; i++) {
+		if (!strcmp(umount_path, mnt_table[i].destination)) {
+			found_mnt = true;
+			mntid = mnt_table[i].mntid;
+			break;
+		}
+	}
+
+	if (!found_mnt) {
+		pr_perror("Could not determine mount id of mountpoint: [%s]\n", umount_path);
+		return -1;
+	}
+
+	/* lazy unmount all direct submounts */
+	for (i = 0; i < table_sz; i++) {
+		if (mnt_table[i].parent_mntid != mntid)
+			continue;
+		ret = umount2(mnt_table[i].destination, MNT_DETACH);
+		if (!ret)
+			pr_pinfo("Unmounted submount: [%s]\n", mnt_table[i].destination);
+		else
+			pr_perror("Failed to unmount submount: [%s]. Skipping.\n", mnt_table[i].destination);
+	}
+	return 0;
+}
+
 static int prestart(const char *rootfs,
 		int pid,
 		const struct config_mount_info *config_mounts,
@@ -320,7 +414,7 @@ static int prestart(const char *rootfs,
 	char process_mnt_ns_fd[PATH_MAX];
 	char umount_path[PATH_MAX];
 	_cleanup_fclose_ FILE *fp = NULL;
-	_cleanup_cptr_array_ char **mounts_on_host = NULL;
+	_cleanup_host_mounts_ struct host_mount_info *mounts_on_host = NULL;
 	_cleanup_cptr_array_ char **mapped_paths = NULL;
 	int nr_umounts = 0;
 	_cleanup_free_ char *line = NULL;
@@ -330,12 +424,12 @@ static int prestart(const char *rootfs,
 	int i, ret, nr_mapped;
 
 	/* Allocate one extra element and keep it zero for cleanup function */
-	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(char *));
+	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
 	if (!mounts_on_host) {
 		pr_perror("Failed to malloc memory for mounts_on_host table\n");
 		return EXIT_FAILURE;
 	}
-	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(char *));
+	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
 
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mapped_paths = malloc((MAX_MAPS + 1) * sizeof(char *));
@@ -358,12 +452,26 @@ static int prestart(const char *rootfs,
 	}
 
 	while ((read = getline(&line, &len, fp)) != -1) {
+		bool submounts_only = false;
+
 		/* Get rid of newline character at the end */
 		line[read - 1] ='\0';
+		read--;
+
+		if (iscomment(line))
+			continue;
 
 		if (nr_umounts == MAX_UMOUNTS) {
 			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
 			return EXIT_FAILURE;
+		}
+
+		// If there is a "/*" at the end, only unmount submounts
+		if (read >= 2) {
+			if (line[read - 1] == '*' && line[read - 2] == '/') {
+				submounts_only = true;
+				line[read - 1] = '\0';
+			}
 		}
 
 		real_path = realpath(line, NULL);
@@ -372,7 +480,9 @@ static int prestart(const char *rootfs,
 			continue;
 		}
 
-		mounts_on_host[nr_umounts++] = real_path;
+		mounts_on_host[nr_umounts].path = real_path;
+		mounts_on_host[nr_umounts].submounts_only = submounts_only;
+		nr_umounts++;
 	}
 
 	if (!nr_umounts)
@@ -406,14 +516,14 @@ static int prestart(const char *rootfs,
 	}
 
 	for (i = 0; i < nr_umounts; i++) {
-		nr_mapped = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i], mapped_paths, MAX_MAPS);
+		nr_mapped = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i].path, mapped_paths, MAX_MAPS);
 		if (nr_mapped < 0) {
-			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i].path);
 			continue;
 		}
 
 		if (!nr_mapped) {
-			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i]);
+			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i].path);
 			continue;
 		}
 
@@ -425,12 +535,11 @@ static int prestart(const char *rootfs,
 				continue;
 			}
 
-			ret = umount2(umount_path, MNT_DETACH);
+			ret = unmount(umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
 			if (ret < 0) {
-				pr_perror("Failed to umount: [%s]", umount_path);
-				return EXIT_FAILURE;
+				pr_perror("Skipping unmount path: [%s]\n", umount_path);
+				continue;
 			}
-			pr_pinfo("Unmounted %s \n", umount_path);
 		}
 		free_char_ptr_array_entries(mapped_paths, nr_mapped);
 	}
