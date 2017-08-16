@@ -5,11 +5,11 @@
 # https://github.com/projectatomic/oci-umount
 %global provider_prefix %{provider}.%{provider_tld}/%{project}/%{repo}
 %global import_path     %{provider_prefix}
-%global commit          c1345751d063d298f4d38c0ceb661c462f0963a3
+%global commit          f034b5a7a33ae8496774d8747edc0ba370a6bcb1
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-umount
-Version:        0.1
+Version:        2.1
 Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI umount hook for docker
 Group:          Applications/Text
@@ -49,7 +49,13 @@ make %{?_smp_mflags}
 %config(noreplace) %{_sysconfdir}/oci-umount.conf
 %dir /%{_libexecdir}/oci
 %dir /%{_libexecdir}/oci/hooks.d
+%dir /%{_sysconfdir}/containers/oci/hooks.d
+%dir /usr/share/containers/oci/hooks.d
+/usr/share/containers/oci/hooks.d/oci-umount.json
 
 %changelog
+* Wed Aug 16 2017 Dan Walsh <dwalsh@redhat.com> - 2.1.1
+- Add support for /usr/share/containers/oci/hooks.d json files
+
 * Wed May 17 2017 Dan Walsh <dwalsh@redhat.com> - 0.1.1
 - Initial RPM release
