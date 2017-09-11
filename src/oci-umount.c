@@ -360,8 +360,6 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 {
 	int ret;
 	unsigned i;
-	unsigned mntid = 0;
-	bool found_mnt = false;
 
 	if (!submounts_only) {
 		ret = umount2(umount_path, MNT_DETACH);
@@ -374,28 +372,15 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 
 	/* Unmount submounts only */
 	for (i = 0; i < table_sz; i++) {
-		if (!strcmp(umount_path, mnt_table[i].destination)) {
-			found_mnt = true;
-			mntid = mnt_table[i].mntid;
-			break;
+		if (!strncmp(umount_path, mnt_table[i].destination, strlen(umount_path))) {
+			ret = umount2(mnt_table[i].destination, MNT_DETACH);
+			if (!ret)
+				pr_pinfo("Unmounted submount: [%s]\n", mnt_table[i].destination);
+			else
+				pr_perror("Failed to unmount submount: [%s]. Skipping.\n", mnt_table[i].destination);
 		}
 	}
 
-	if (!found_mnt) {
-		pr_perror("Could not determine mount id of mountpoint: [%s]\n", umount_path);
-		return -1;
-	}
-
-	/* lazy unmount all direct submounts */
-	for (i = 0; i < table_sz; i++) {
-		if (mnt_table[i].parent_mntid != mntid)
-			continue;
-		ret = umount2(mnt_table[i].destination, MNT_DETACH);
-		if (!ret)
-			pr_pinfo("Unmounted submount: [%s]\n", mnt_table[i].destination);
-		else
-			pr_perror("Failed to unmount submount: [%s]. Skipping.\n", mnt_table[i].destination);
-	}
 	return 0;
 }
 
@@ -530,7 +515,9 @@ static int prestart(const char *rootfs,
 		for (int j = 0; j < nr_mapped; j++) {
 			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
 
-			if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
+
+			if (!mounts_on_host[i].submounts_only &&
+			    !is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
 				pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
 				continue;
 			}
