@@ -3,6 +3,10 @@ oci_umount_SOURCES = src/oci-umount.c
 oci_umount_DATA = oci-umount.conf
 oci_umountdir=/etc
 
+oci_umount_json_CONFIG = oci-umount-json
+oci_umount_json_DATA = oci-umount.json
+oci_umount_jsondir=/usr/share/containers/oci/hooks.d
+
 oci_umount_CFLAGS = -Wall -Wextra -std=c99 $(YAJL_CFLAGS)
 oci_umount_LDADD = $(YAJL_LIBS)
 oci_umount_CFLAGS += $(SELINUX_CFLAGS)
@@ -14,12 +18,15 @@ EXTRA_DIST = README.md LICENSE
 oci-umount.1: doc/oci-umount.1.md
 	go-md2man -in doc/oci-umount.1.md -out oci-umount.1
 
-dist: oci-umount.spec 
+spec: oci-umount.spec
 	spectool -g oci-umount.spec
 
-rpm: dist
+rpm: spec
 	rpmbuild --define "_sourcedir `pwd`" --define "_specdir `pwd`" \
 	--define "_rpmdir `pwd`" --define "_srcrpmdir `pwd`" -ba oci-umount.spec 
+
+install-data-local:
+	$(MKDIR_P) $(DESTDIR)/etc/containers/oci/hooks.d
 
 clean-local:
 	-rm -f oci-umount.1 *~
