@@ -746,9 +746,9 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
 		if (strlen(errbuf)) {
-			pr_perror("parse error: %s %s", id, errbuf);
+			pr_perror("parse error: %s: %s: %s", id, config_file_name, errbuf);
 		} else {
-			pr_perror("parse error: %s unknown error", id);
+			pr_perror("parse error: %s: %s: unknown error", id, config_file_name);
 		}
 		return EXIT_FAILURE;
 	}
@@ -757,7 +757,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 	const char *root_path[] = { "root", "path", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(config_node, root_path, yajl_t_string);
 	if (!v_root) {
-		pr_perror("%s: root not found in config.json", id);
+		pr_perror("%s: root not found in %s", id, config_file_name);
 		return EXIT_FAILURE;
 	}
 	char *lrootfs = YAJL_GET_STRING(v_root);
@@ -784,7 +784,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 	const char *mount_points_path[] = {"mounts", (const char *)0 };
 	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
 	if (!v_mounts) {
-		pr_perror("%s: mounts not found in config", id);
+		pr_perror("%s: mounts not found in %s", id, config_file_name);
 		return EXIT_FAILURE;
 	}
 
@@ -807,7 +807,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 
 		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
 		if (!v_destination) {
-			pr_perror("%s: cannot find mount destination", id);
+			pr_perror("%s: cannot find mount destination in %s", id, config_file_name);
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
@@ -819,7 +819,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 
 		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
 		if (!v_source) {
-			pr_perror("%s: Cannot find mount source", id);
+			pr_perror("%s: Cannot find mount source in %s", id, config_file_name);
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
