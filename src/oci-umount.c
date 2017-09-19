@@ -255,7 +255,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 	return 0;
 }
 
-static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz) {
+static bool is_mounted(char *path, const struct mount_info *mnt_table, size_t table_sz) {
 	size_t i;
 
 	for (i = 0; i < table_sz; i++) {
@@ -364,6 +364,11 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 	bool found_mnt = false;
 
 	if (!submounts_only) {
+		if (!is_mounted((char *)umount_path, mnt_table, table_sz)) {
+			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+			return 0;
+		}
+
 		ret = umount2(umount_path, MNT_DETACH);
 		if (!ret)
 			pr_pinfo("Unmounted: [%s]\n", umount_path);
@@ -529,12 +534,6 @@ static int prestart(const char *rootfs,
 
 		for (int j = 0; j < nr_mapped; j++) {
 			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
-
-			if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
-				pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
-				continue;
-			}
-
 			ret = unmount(umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
 			if (ret < 0) {
 				pr_perror("Skipping unmount path: [%s]\n", umount_path);
