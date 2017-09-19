@@ -143,6 +143,10 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 #define BUFLEN 1024
 #define CHUNKSIZE 4096
 
+char *shortid(const char *id) {
+	return strndup(id, 12);
+}
+
 int iscomment(const char *line) {
 	int len = strlen(line);
 
@@ -174,7 +178,7 @@ static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_s
 	return table;
 }
 
-static int parse_mountinfo(struct mount_info **info, size_t *sz)
+static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 {
 	_cleanup_fclose_ FILE *fp;
 	_cleanup_mnt_info_ struct mount_info *mnt_table = NULL;
@@ -192,7 +196,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 
 	fp = fopen(MOUNTINFO_PATH, "r");
 	if (!fp) {
-		pr_perror("Failed to open %s %m\n", MOUNTINFO_PATH);
+		pr_perror("%s: Failed to open %s %m\n", id, MOUNTINFO_PATH);
 		return -1;
 	}
 
@@ -202,7 +206,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 	 */
 	mnt_table = (struct mount_info *)realloc(NULL, table_sz_bytes);
 	if (!mnt_table) {
-		pr_perror("Failed to allocate memory for mount tabel\n");
+		pr_perror("%s: Failed to allocate memory for mount tabel\n", id);
 		return -1;
 	}
 
@@ -226,7 +230,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 
 			dest = strdup(token);
 			if (!dest) {
-				pr_perror("strdup() failed\n");
+				pr_perror("%s: strdup(%s) failed\n", id, token);
 				return -1;
 			}
 
@@ -238,7 +242,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 				int new_sz_bytes = table_sz_bytes + elem_sz * 64;
 				mnt_table_temp = grow_mountinfo_table(mnt_table, table_sz_bytes, new_sz_bytes);
 				if (!mnt_table_temp) {
-					pr_perror("Failed to realloc mountinfo table\n");
+					pr_perror("%s: Failed to realloc mountinfo table\n", id);
 					return -1;
 				}
 				mnt_table = mnt_table_temp;
@@ -266,7 +270,7 @@ static bool is_mounted(char *path, const struct mount_info *mnt_table, size_t ta
 }
 
 /* return <0 on failure otherwise 0.  */
-static int map_one_entry(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped, char *suffix, unsigned *nr_mapped) {
+static int map_one_entry(const char *id, const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped, char *suffix, unsigned *nr_mapped) {
 	char *str, *dest;
 	unsigned i, suffix_len = 0;
 	char path[PATH_MAX];
@@ -280,7 +284,7 @@ static int map_one_entry(const struct config_mount_info *config_mounts, unsigned
 
 		dest = config_mounts[i].destination;
 		if ((strlen(dest) + suffix_len + 1 > PATH_MAX)) {
-			pr_perror("Mapped destination=%s and suffix=%s together are longer than PATH_MAX\n", dest, suffix);
+			pr_perror("%s: Mapped destination=%s and suffix=%s together are longer than PATH_MAX\n", id, dest, suffix);
 			continue;
 		}
 
@@ -290,12 +294,12 @@ static int map_one_entry(const struct config_mount_info *config_mounts, unsigned
 
 		str = strdup(path);
 		if (!str) {
-			pr_perror("strdup(%s) failed.\n", path);
+			pr_perror("%s: strdup(%s) failed.\n", id, path);
 			return -1;
 		}
 
 		if (*nr_mapped >= max_mapped) {
-			pr_perror("Mapping array is full (size=%d). Can't add another entry.\n", *nr_mapped);
+			pr_perror("%s: Mapping array is full (size=%d). Can't add another entry.\n", id, *nr_mapped);
 			return -1;
 		}
 
@@ -315,7 +319,7 @@ static void free_char_ptr_array_entries(char **array, unsigned int nr_entries) {
 
 
 /* Returns <0 on error otherwise number of mappings found  */
-static int map_mount_host_to_container(const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped)
+static int map_mount_host_to_container(const char *id, const struct config_mount_info *config_mounts, unsigned config_mounts_len, char *host_mnt, char **cont_mnt, unsigned max_mapped)
 {
 	char *str;
 	_cleanup_free_ char *host_mnt_dup = NULL;
@@ -325,13 +329,13 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 
 	host_mnt_dup = strdup(host_mnt);
 	if (!host_mnt_dup) {
-		pr_perror("strdup(%s) failed.\n", host_mnt);
+		pr_perror("%s: strdup(%s) failed.\n", id, host_mnt);
 		return -1;
 	}
 
 	str = host_mnt_dup;
 	do {
-		ret = map_one_entry(config_mounts, config_mounts_len, str, cont_mnt, max_mapped, suffix, &nr_mapped);
+		ret = map_one_entry(id, config_mounts, config_mounts_len, str, cont_mnt, max_mapped, suffix, &nr_mapped);
 		if (ret < 0) {
 			free_char_ptr_array_entries(cont_mnt, nr_mapped);
 			return ret;
@@ -349,7 +353,7 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 	} while(1);
 
 	for (unsigned i = 0; i < nr_mapped; i++) {
-		pr_pinfo("mapped host_mnt=%s to cont_mnt=%s\n", host_mnt, cont_mnt[i]);
+		pr_pinfo("%s: mapped host_mnt=%s to cont_mnt=%s\n", id, host_mnt, cont_mnt[i]);
 	}
 
 	return nr_mapped;
@@ -377,7 +381,7 @@ static int find_mntid(char *path, const struct mount_info *mnt_table, size_t tab
  * then mount id of that mount is returned. Otherwise we travel up the path
  * and see try to find which part of it is mounted
  */
-static int parent_mntid(char *path, const struct mount_info *mnt_table, size_t table_sz)
+static int parent_mntid(const char *id, char *path, const struct mount_info *mnt_table, size_t table_sz)
 {
 	_cleanup_free_ char *path_copy = NULL;
 	char *dname;
@@ -385,7 +389,7 @@ static int parent_mntid(char *path, const struct mount_info *mnt_table, size_t t
 
 	path_copy = strdup(path);
 	if (!path_copy) {
-		pr_perror("strdup(%s) failed: %s\n", path, strerror(errno));
+		pr_perror("%s: strdup(%s) failed: %s\n", id, path, strerror(errno));
 		return -1;
 	}
 
@@ -410,7 +414,7 @@ static int parent_mntid(char *path, const struct mount_info *mnt_table, size_t t
 }
 
 /* Returns 0 on success, negative error otherwise */
-static int unmount(char *umount_path, bool submounts_only, const struct mount_info *mnt_table, size_t table_sz)
+static int unmount(const char *id, char *umount_path, bool submounts_only, const struct mount_info *mnt_table, size_t table_sz)
 {
 	int ret, i;
 	int mntid = 0;
@@ -423,16 +427,16 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 
 		ret = umount2(umount_path, MNT_DETACH);
 		if (!ret)
-			pr_pinfo("Unmounted: [%s]\n", umount_path);
+			pr_pinfo("%s: Unmounted: [%s]\n", id, umount_path);
 		else
-			pr_perror("Failed to unmount: [%s]\n", umount_path);
+			pr_perror("%s: Failed to unmount: [%s]\n", id, umount_path);
 		return ret;
 	}
 
 	/* Unmount submounts only */
-	mntid = parent_mntid(umount_path, mnt_table, table_sz);
+	mntid = parent_mntid(id, umount_path, mnt_table, table_sz);
 	if (mntid < 0) {
-		pr_perror("Could not determine mount id of path: [%s]\n", umount_path);
+		pr_perror("%s: Could not determine mount id of path: [%s]\n", id, umount_path);
 		return -1;
 	}
 
@@ -461,19 +465,21 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 
 		ret = umount2(mnt_table[i].destination, MNT_DETACH);
 		if (!ret)
-			pr_pinfo("Unmounted submount: [%s]\n", mnt_table[i].destination);
+			pr_pinfo("%s: Unmounted submount: [%s]\n", id, mnt_table[i].destination);
 		else
-			pr_perror("Failed to unmount submount: [%s]. Skipping.\n", mnt_table[i].destination);
+			pr_perror("%s: Failed to unmount submount: [%s]. Skipping.\n", id, mnt_table[i].destination);
 	}
 	return 0;
 }
 
-static int prestart(const char *rootfs,
-		int pid,
-		const struct config_mount_info *config_mounts,
-		unsigned config_mounts_len)
+static int prestart(
+	const char *id,
+	const char *rootfs,
+	int pid,
+	const struct config_mount_info *config_mounts,
+	unsigned config_mounts_len)
 {
-	pr_pinfo("prestart %s", rootfs);
+	pr_pinfo("prestart container_id:%s rootfs:%s", id, rootfs);
 	_cleanup_close_  int fd = -1;
 	_cleanup_free_   char *options = NULL;
 
@@ -495,7 +501,7 @@ static int prestart(const char *rootfs,
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
 	if (!mounts_on_host) {
-		pr_perror("Failed to malloc memory for mounts_on_host table\n");
+		pr_perror("%s: Failed to malloc memory for mounts_on_host table\n", id);
 		return EXIT_FAILURE;
 	}
 	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
@@ -503,7 +509,7 @@ static int prestart(const char *rootfs,
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mapped_paths = malloc((MAX_MAPS + 1) * sizeof(char *));
 	if (!mapped_paths) {
-		pr_perror("Failed to malloc memory for mapped_paths array\n");
+		pr_perror("%s: Failed to malloc memory for mapped_paths array\n", id);
 		return EXIT_FAILURE;
 	}
 	memset((void *)mapped_paths, 0, (MAX_MAPS + 1) * sizeof(char *));
@@ -513,10 +519,10 @@ static int prestart(const char *rootfs,
 	fp = fopen(MOUNTCONF, "r");
 	if (fp == NULL) {
 		if (errno == ENOENT) {
-			pr_pwarning("Config file not found: %s", MOUNTCONF);
+			pr_pwarning("%s: Config file not found: %s", id, MOUNTCONF);
 			return 0;
 		}
-		pr_perror("Failed to open config file: %s", MOUNTCONF);
+		pr_perror("%s: Failed to open config file: %s", id, MOUNTCONF);
 		return EXIT_FAILURE;
 	}
 
@@ -531,7 +537,7 @@ static int prestart(const char *rootfs,
 			continue;
 
 		if (nr_umounts == MAX_UMOUNTS) {
-			pr_perror("Exceeded maximum number of supported unmounts is %d\n", MAX_UMOUNTS);
+			pr_perror("%s: Exceeded maximum number of supported unmounts is %d\n", id, MAX_UMOUNTS);
 			return EXIT_FAILURE;
 		}
 
@@ -545,7 +551,7 @@ static int prestart(const char *rootfs,
 
 		real_path = realpath(line, NULL);
 		if (!real_path) {
-			pr_pinfo("Failed to canonicalize path [%s]: %m. Skipping.", line);
+			pr_pinfo("%s: Failed to canonicalize path [%s]: %m. Skipping.", id, line);
 			continue;
 		}
 
@@ -561,46 +567,46 @@ static int prestart(const char *rootfs,
 
 	fd = open(process_mnt_ns_fd, O_RDONLY);
 	if (fd < 0) {
-		pr_perror("Failed to open mnt namespace fd %s", process_mnt_ns_fd);
+		pr_perror("%s: Failed to open mnt namespace fd %s", id, process_mnt_ns_fd);
 		return EXIT_FAILURE;
 	}
 
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
-		pr_perror("Failed to setns to %s", process_mnt_ns_fd);
+		pr_perror("%s: Failed to setns to %s", id, process_mnt_ns_fd);
 		return EXIT_FAILURE;
 	}
 
 	/* Switch to the root directory */
 	if (chdir("/") == -1) {
-		pr_perror("Failed to chdir");
+		pr_perror("%s: Failed to chdir", id);
 		return EXIT_FAILURE;
 	}
 
 	/* Parse mount table */
-	ret = parse_mountinfo(&mnt_table, &mnt_table_sz);
+	ret = parse_mountinfo(id, &mnt_table, &mnt_table_sz);
 	if (ret < 0) {
-		pr_perror("Failed to parse mountinfo table\n");
+		pr_perror("%s: Failed to parse mountinfo table\n", id);
 		return EXIT_FAILURE;
 	}
 
 	for (i = 0; i < nr_umounts; i++) {
-		nr_mapped = map_mount_host_to_container(config_mounts, config_mounts_len, mounts_on_host[i].path, mapped_paths, MAX_MAPS);
+		nr_mapped = map_mount_host_to_container(id, config_mounts, config_mounts_len, mounts_on_host[i].path, mapped_paths, MAX_MAPS);
 		if (nr_mapped < 0) {
-			pr_perror("Error while trying to map mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i].path);
+			pr_perror("%s: Error while trying to map mount [%s] from host to conatiner. Skipping.\n", id, mounts_on_host[i].path);
 			continue;
 		}
 
 		if (!nr_mapped) {
-			pr_pinfo("Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", mounts_on_host[i].path);
+			pr_pinfo("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", id, mounts_on_host[i].path);
 			continue;
 		}
 
 		for (int j = 0; j < nr_mapped; j++) {
 			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
-			ret = unmount(umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
+			ret = unmount(id, umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
 			if (ret < 0) {
-				pr_perror("Skipping unmount path: [%s]\n", umount_path);
+				pr_perror("%s: Skipping unmount path: [%s]\n", id, umount_path);
 				continue;
 			}
 		}
@@ -698,7 +704,7 @@ fail:
 	return NULL;
 }
 
-static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_info **mounts, size_t *mounts_len)
+static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct config_mount_info **mounts, size_t *mounts_len)
 {
 	yajl_val node = *node_ptr;
 	char config_file_name[PATH_MAX];
@@ -726,7 +732,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	}
 
 	if (fp == NULL) {
-		pr_perror("Failed to open config file: %s", config_file_name);
+		pr_perror("%s: Failed to open config file: %s", id, config_file_name);
 		return EXIT_FAILURE;
 	}
 
@@ -740,11 +746,10 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	memset(errbuf, 0, BUFLEN);
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
-		pr_perror("parse_error: ");
 		if (strlen(errbuf)) {
-			pr_perror(" %s", errbuf);
+			pr_perror("parse error: %s %s", id, errbuf);
 		} else {
-			pr_perror("unknown error");
+			pr_perror("parse error: %s unknown error", id);
 		}
 		return EXIT_FAILURE;
 	}
@@ -753,7 +758,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	const char *root_path[] = { "root", "path", (const char *)0 };
 	yajl_val v_root = yajl_tree_get(config_node, root_path, yajl_t_string);
 	if (!v_root) {
-		pr_perror("root not found in config.json");
+		pr_perror("%s: root not found in config.json", id);
 		return EXIT_FAILURE;
 	}
 	char *lrootfs = YAJL_GET_STRING(v_root);
@@ -762,7 +767,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	if (lrootfs[0] == '/') {
 		*rootfs = strdup(lrootfs);
 		if (!*rootfs) {
-			pr_perror("failed to alloc rootfs");
+			pr_perror("%s: failed to alloc rootfs", id);
 			return EXIT_FAILURE;
 		}
 	} else {
@@ -770,7 +775,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 
 		asprintf(&new_rootfs, "%s/%s", YAJL_GET_STRING(v_bundle_path), lrootfs);
 		if (!new_rootfs) {
-			pr_perror("failed to alloc rootfs");
+			pr_perror("%s: failed to alloc rootfs", id);
 			return EXIT_FAILURE;
 		}
 		*rootfs = new_rootfs;
@@ -780,7 +785,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	const char *mount_points_path[] = {"mounts", (const char *)0 };
 	yajl_val v_mounts = yajl_tree_get(config_node, mount_points_path, yajl_t_array);
 	if (!v_mounts) {
-		pr_perror("mounts not found in config");
+		pr_perror("%s: mounts not found in config", id);
 		return EXIT_FAILURE;
 	}
 
@@ -789,7 +794,7 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 	 * end of array in free function */
 	config_mounts = malloc(sizeof(struct config_mount_info) * (config_mounts_len + 1));
 	if (!config_mounts) {
-		pr_perror("error malloc'ing");
+		pr_perror("%s: error malloc'ing", id);
 		return EXIT_FAILURE;
 	}
 
@@ -803,23 +808,23 @@ static int parseBundle(yajl_val *node_ptr, char **rootfs, struct config_mount_in
 
 		yajl_val v_destination = yajl_tree_get(v_mounts_values, destination_path, yajl_t_string);
 		if (!v_destination) {
-			pr_perror("cannot find mount destination");
+			pr_perror("%s: cannot find mount destination", id);
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
 		if (!config_mounts[i].destination) {
-			pr_perror("strdup() failed.\n");
+			pr_perror("%s: strdup() failed.\n", id);
 			return EXIT_FAILURE;
 		}
 
 		yajl_val v_source = yajl_tree_get(v_mounts_values, source_path, yajl_t_string);
 		if (!v_source) {
-			pr_perror("Cannot find mount source");
+			pr_perror("%s: Cannot find mount source", id);
 			return EXIT_FAILURE;
 		}
 		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
 		if (!config_mounts[i].source) {
-			pr_perror("strdup() failed.\n");
+			pr_perror("%s: strdup() failed.\n", id);
 			return EXIT_FAILURE;
 		}
 	}
@@ -839,6 +844,7 @@ int main(int argc, char *argv[])
 	char errbuf[BUFLEN];
 	char *stateData;
 	_cleanup_fclose_ FILE *fp = NULL;
+	_cleanup_free_ char *id = NULL;
 	int ret;
 	_cleanup_config_mounts_ struct config_mount_info *config_mounts = NULL;
 	size_t config_mounts_len = 0;
@@ -853,46 +859,58 @@ int main(int argc, char *argv[])
 	memset(errbuf, 0, BUFLEN);
 	node = yajl_tree_parse((const char *)stateData, errbuf, sizeof(errbuf));
 	if (node == NULL) {
-		pr_perror("parse_error: ");
 		if (strlen(errbuf)) {
-			pr_perror(" %s", errbuf);
+			pr_perror("parse_error: %s", errbuf);
 		} else {
-			pr_perror("unknown error");
+			pr_perror("parse_error: unknown error");
 		}
+		return EXIT_FAILURE;
+	}
+
+	const char *id_path[] = { "id", (const char *) 0 };
+	yajl_val v_id = yajl_tree_get(node, id_path, yajl_t_string);
+	if (!v_id) {
+		pr_perror("id not found in state");
+		return EXIT_FAILURE;
+	}
+	const char *container_id = YAJL_GET_STRING(v_id);
+	id = shortid(container_id);
+	if (!id) {
+		pr_perror("%s: failed to create shortid", container_id);
 		return EXIT_FAILURE;
 	}
 
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
 	if (!v_pid) {
-		pr_perror("pid not found in state");
+		pr_perror("%s: pid not found in state", id);
 		return EXIT_FAILURE;
 	}
 	int target_pid = YAJL_GET_INTEGER(v_pid);
 
-	/* OCI hooks set target_pid to 0 on poststop, as the container process 
-	   already exited.  If target_pid is bigger than 0 then it is a start 
-	   hook. 
+	/* OCI hooks set target_pid to 0 on poststop, as the container process
+	   already exited.  If target_pid is bigger than 0 then it is a start
+	   hook.
 	   In most cases the calling program should pass in a argv[1] option,
 	   like prestart, poststart or poststop.  In certain cases we also
-	   support passing of no argv[1], and then default to prestart if the 
+	   support passing of no argv[1], and then default to prestart if the
 	   target_pid != 0, poststop if target_pid == 0.
 	*/
 	if ((argc >= 2 && !strcmp("prestart", argv[1])) ||
 	    (argc == 1 && target_pid)) {
 		_cleanup_free_ char *rootfs=NULL;
-		ret = parseBundle(&node, &rootfs, &config_mounts, &config_mounts_len);
+		ret = parseBundle(id, &node, &rootfs, &config_mounts, &config_mounts_len);
 		if (ret < 0)
 			return EXIT_FAILURE;
 
-		if (prestart(rootfs, target_pid, config_mounts, config_mounts_len) != 0) {
+		if (prestart(id, rootfs, target_pid, config_mounts, config_mounts_len) != 0) {
 			return EXIT_FAILURE;
 		}
 	} else {
 		if (argc >= 2) {
-			pr_pdebug("%s ignored", argv[1]);
+			pr_pdebug("%s: %s ignored", id, argv[1]);
 		} else {
-			pr_pdebug("No args ignoring");
+			pr_pdebug("%s: No args ignoring", id);
 		}
 	}
 
