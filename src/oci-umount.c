@@ -812,7 +812,8 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 		}
 		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
 		if (!config_mounts[i].destination) {
-			pr_perror("%s: strdup() failed.", id);
+
+			pr_perror("%s: strdup(%s) failed.", id, YAJL_GET_STRING(v_destination));
 			return EXIT_FAILURE;
 		}
 
@@ -823,7 +824,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 		}
 		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
 		if (!config_mounts[i].source) {
-			pr_perror("%s: strdup() failed.", id);
+			pr_perror("%s: strdup(%s) failed.", id, YAJL_GET_STRING(v_source));
 			return EXIT_FAILURE;
 		}
 	}
