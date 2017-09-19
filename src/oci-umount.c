@@ -196,7 +196,7 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 
 	fp = fopen(MOUNTINFO_PATH, "r");
 	if (!fp) {
-		pr_perror("%s: Failed to open %s %m\n", id, MOUNTINFO_PATH);
+		pr_perror("%s: Failed to open %s %m", id, MOUNTINFO_PATH);
 		return -1;
 	}
 
@@ -206,7 +206,7 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 	 */
 	mnt_table = (struct mount_info *)realloc(NULL, table_sz_bytes);
 	if (!mnt_table) {
-		pr_perror("%s: Failed to allocate memory for mount tabel\n", id);
+		pr_perror("%s: Failed to allocate memory for mount tabel", id);
 		return -1;
 	}
 
@@ -230,7 +230,7 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 
 			dest = strdup(token);
 			if (!dest) {
-				pr_perror("%s: strdup(%s) failed\n", id, token);
+				pr_perror("%s: strdup(%s) failed", id, token);
 				return -1;
 			}
 
@@ -242,7 +242,7 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 				int new_sz_bytes = table_sz_bytes + elem_sz * 64;
 				mnt_table_temp = grow_mountinfo_table(mnt_table, table_sz_bytes, new_sz_bytes);
 				if (!mnt_table_temp) {
-					pr_perror("%s: Failed to realloc mountinfo table\n", id);
+					pr_perror("%s: Failed to realloc mountinfo table", id);
 					return -1;
 				}
 				mnt_table = mnt_table_temp;
@@ -284,8 +284,7 @@ static int map_one_entry(const char *id, const struct config_mount_info *config_
 
 		dest = config_mounts[i].destination;
 		if ((strlen(dest) + suffix_len + 1 > PATH_MAX)) {
-			pr_perror("%s: Mapped destination=%s and suffix=%s together are longer than PATH_MAX\n", id, dest, suffix);
-			continue;
+			pr_perror("%s: Mapped destination=%s and suffix=%s together are longer than PATH_MAX", id, dest, suffix);
 		}
 
 		strcpy(path, config_mounts[i].destination);
@@ -294,12 +293,12 @@ static int map_one_entry(const char *id, const struct config_mount_info *config_
 
 		str = strdup(path);
 		if (!str) {
-			pr_perror("%s: strdup(%s) failed.\n", id, path);
+			pr_perror("%s: strdup(%s) failed.", id, path);
 			return -1;
 		}
 
 		if (*nr_mapped >= max_mapped) {
-			pr_perror("%s: Mapping array is full (size=%d). Can't add another entry.\n", id, *nr_mapped);
+			pr_perror("%s: Mapping array is full (size=%d). Can't add another entry.", id, *nr_mapped);
 			return -1;
 		}
 
@@ -329,7 +328,7 @@ static int map_mount_host_to_container(const char *id, const struct config_mount
 
 	host_mnt_dup = strdup(host_mnt);
 	if (!host_mnt_dup) {
-		pr_perror("%s: strdup(%s) failed.\n", id, host_mnt);
+		pr_perror("%s: strdup(%s) failed.", id, host_mnt);
 		return -1;
 	}
 
@@ -353,7 +352,7 @@ static int map_mount_host_to_container(const char *id, const struct config_mount
 	} while(1);
 
 	for (unsigned i = 0; i < nr_mapped; i++) {
-		pr_pinfo("%s: mapped host_mnt=%s to cont_mnt=%s\n", id, host_mnt, cont_mnt[i]);
+		pr_pinfo("%s: mapped host_mnt=%s to cont_mnt=%s", id, host_mnt, cont_mnt[i]);
 	}
 
 	return nr_mapped;
@@ -389,7 +388,7 @@ static int parent_mntid(const char *id, char *path, const struct mount_info *mnt
 
 	path_copy = strdup(path);
 	if (!path_copy) {
-		pr_perror("%s: strdup(%s) failed: %s\n", id, path, strerror(errno));
+		pr_perror("%s: strdup(%s) failed: %s", id, path, strerror(errno));
 		return -1;
 	}
 
@@ -427,16 +426,16 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 
 		ret = umount2(umount_path, MNT_DETACH);
 		if (!ret)
-			pr_pinfo("%s: Unmounted: [%s]\n", id, umount_path);
+			pr_pinfo("%s: Unmounted: [%s]", id, umount_path);
 		else
-			pr_perror("%s: Failed to unmount: [%s]\n", id, umount_path);
+			pr_perror("%s: Failed to unmount: [%s]", id, umount_path);
 		return ret;
 	}
 
 	/* Unmount submounts only */
 	mntid = parent_mntid(id, umount_path, mnt_table, table_sz);
 	if (mntid < 0) {
-		pr_perror("%s: Could not determine mount id of path: [%s]\n", id, umount_path);
+		pr_perror("%s: Could not determine mount id of path: [%s]", id, umount_path);
 		return -1;
 	}
 
@@ -465,9 +464,9 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 
 		ret = umount2(mnt_table[i].destination, MNT_DETACH);
 		if (!ret)
-			pr_pinfo("%s: Unmounted submount: [%s]\n", id, mnt_table[i].destination);
+			pr_pinfo("%s: Unmounted submount: [%s]", id, mnt_table[i].destination);
 		else
-			pr_perror("%s: Failed to unmount submount: [%s]. Skipping.\n", id, mnt_table[i].destination);
+			pr_perror("%s: Failed to unmount submount: [%s]. Skipping.", id, mnt_table[i].destination);
 	}
 	return 0;
 }
@@ -501,7 +500,7 @@ static int prestart(
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mounts_on_host = malloc((MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
 	if (!mounts_on_host) {
-		pr_perror("%s: Failed to malloc memory for mounts_on_host table\n", id);
+		pr_perror("%s: Failed to malloc memory for mounts_on_host table", id);
 		return EXIT_FAILURE;
 	}
 	memset((void *)mounts_on_host, 0, (MAX_UMOUNTS + 1) * sizeof(struct host_mount_info));
@@ -509,7 +508,7 @@ static int prestart(
 	/* Allocate one extra element and keep it zero for cleanup function */
 	mapped_paths = malloc((MAX_MAPS + 1) * sizeof(char *));
 	if (!mapped_paths) {
-		pr_perror("%s: Failed to malloc memory for mapped_paths array\n", id);
+		pr_perror("%s: Failed to malloc memory for mapped_paths array", id);
 		return EXIT_FAILURE;
 	}
 	memset((void *)mapped_paths, 0, (MAX_MAPS + 1) * sizeof(char *));
@@ -537,7 +536,7 @@ static int prestart(
 			continue;
 
 		if (nr_umounts == MAX_UMOUNTS) {
-			pr_perror("%s: Exceeded maximum number of supported unmounts is %d\n", id, MAX_UMOUNTS);
+			pr_perror("%s: Exceeded maximum number of supported unmounts is %d", id, MAX_UMOUNTS);
 			return EXIT_FAILURE;
 		}
 
@@ -586,19 +585,19 @@ static int prestart(
 	/* Parse mount table */
 	ret = parse_mountinfo(id, &mnt_table, &mnt_table_sz);
 	if (ret < 0) {
-		pr_perror("%s: Failed to parse mountinfo table\n", id);
+		pr_perror("%s: Failed to parse mountinfo table", id);
 		return EXIT_FAILURE;
 	}
 
 	for (i = 0; i < nr_umounts; i++) {
 		nr_mapped = map_mount_host_to_container(id, config_mounts, config_mounts_len, mounts_on_host[i].path, mapped_paths, MAX_MAPS);
 		if (nr_mapped < 0) {
-			pr_perror("%s: Error while trying to map mount [%s] from host to conatiner. Skipping.\n", id, mounts_on_host[i].path);
+			pr_perror("%s: Error while trying to map mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
 			continue;
 		}
 
 		if (!nr_mapped) {
-			pr_pinfo("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.\n", id, mounts_on_host[i].path);
+			pr_pinfo("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
 			continue;
 		}
 
@@ -606,7 +605,7 @@ static int prestart(
 			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
 			ret = unmount(id, umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
 			if (ret < 0) {
-				pr_perror("%s: Skipping unmount path: [%s]\n", id, umount_path);
+				pr_perror("%s: Skipping unmount path: [%s]", id, umount_path);
 				continue;
 			}
 		}
@@ -813,7 +812,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 		}
 		config_mounts[i].destination = strdup(YAJL_GET_STRING(v_destination));
 		if (!config_mounts[i].destination) {
-			pr_perror("%s: strdup() failed.\n", id);
+			pr_perror("%s: strdup() failed.", id);
 			return EXIT_FAILURE;
 		}
 
@@ -824,7 +823,7 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 		}
 		config_mounts[i].source = strdup(YAJL_GET_STRING(v_source));
 		if (!config_mounts[i].source) {
-			pr_perror("%s: strdup() failed.\n", id);
+			pr_perror("%s: strdup() failed.", id);
 			return EXIT_FAILURE;
 		}
 	}
