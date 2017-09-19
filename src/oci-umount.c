@@ -478,7 +478,7 @@ static int prestart(
 	const struct config_mount_info *config_mounts,
 	unsigned config_mounts_len)
 {
-	pr_pinfo("prestart container_id:%s rootfs:%s", id, rootfs);
+	pr_pdebug("prestart container_id:%s rootfs:%s", id, rootfs);
 	_cleanup_close_  int fd = -1;
 	_cleanup_free_   char *options = NULL;
 
@@ -550,7 +550,7 @@ static int prestart(
 
 		real_path = realpath(line, NULL);
 		if (!real_path) {
-			pr_pinfo("%s: Failed to canonicalize path [%s]: %m. Skipping.", id, line);
+			pr_pdebug("%s: Failed to canonicalize path [%s]: %m. Skipping.", id, line);
 			continue;
 		}
 
@@ -597,7 +597,7 @@ static int prestart(
 		}
 
 		if (!nr_mapped) {
-			pr_pinfo("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
+			pr_pdebug("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
 			continue;
 		}
 
