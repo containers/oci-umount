@@ -255,7 +255,7 @@ static int parse_mountinfo(struct mount_info **info, size_t *sz)
 	return 0;
 }
 
-static bool is_mounted(char *path, struct mount_info *mnt_table, size_t table_sz) {
+static bool is_mounted(char *path, const struct mount_info *mnt_table, size_t table_sz) {
 	size_t i;
 
 	for (i = 0; i < table_sz; i++) {
@@ -355,15 +355,72 @@ static int map_mount_host_to_container(const struct config_mount_info *config_mo
 	return nr_mapped;
 }
 
+/*
+ * Given a mount path, gets its mount id from mountinfo table. If a mount is
+ * found, mount id is returned, otherwise -1 is returned
+ */
+static int find_mntid(char *path, const struct mount_info *mnt_table, size_t table_sz)
+{
+	unsigned i;
+
+	for (i = 0; i < table_sz; i++) {
+		if (!strcmp(path, mnt_table[i].destination)) {
+			return mnt_table[i].mntid;
+		}
+	}
+
+	return -1;
+}
+
+/*
+ * Find mount id of parent mount of a path. If path itself is a mount point,
+ * then mount id of that mount is returned. Otherwise we travel up the path
+ * and see try to find which part of it is mounted
+ */
+static int parent_mntid(char *path, const struct mount_info *mnt_table, size_t table_sz)
+{
+	_cleanup_free_ char *path_copy = NULL;
+	char *dname;
+	int mntid;
+
+	path_copy = strdup(path);
+	if (!path_copy) {
+		pr_perror("strdup(%s) failed: %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	dname = path_copy;
+
+	while(1) {
+		mntid = find_mntid(dname, mnt_table, table_sz);
+		if (mntid >= 0) {
+			return mntid;
+		}
+
+		if (!strcmp(dname, "/"))
+			break;
+
+		/* Path is not a mount point. Go one level up */
+		dname = dirname(dname);
+		if (!strcmp(dname, "."))
+			break;
+	}
+
+	return -1;
+}
+
 /* Returns 0 on success, negative error otherwise */
 static int unmount(char *umount_path, bool submounts_only, const struct mount_info *mnt_table, size_t table_sz)
 {
-	int ret;
-	unsigned i;
-	unsigned mntid = 0;
-	bool found_mnt = false;
+	int ret, i;
+	int mntid = 0;
 
 	if (!submounts_only) {
+		if (!is_mounted((char *)umount_path, mnt_table, table_sz)) {
+			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+			return 0;
+		}
+
 		ret = umount2(umount_path, MNT_DETACH);
 		if (!ret)
 			pr_pinfo("Unmounted: [%s]\n", umount_path);
@@ -373,23 +430,35 @@ static int unmount(char *umount_path, bool submounts_only, const struct mount_in
 	}
 
 	/* Unmount submounts only */
-	for (i = 0; i < table_sz; i++) {
-		if (!strcmp(umount_path, mnt_table[i].destination)) {
-			found_mnt = true;
-			mntid = mnt_table[i].mntid;
-			break;
-		}
-	}
-
-	if (!found_mnt) {
-		pr_perror("Could not determine mount id of mountpoint: [%s]\n", umount_path);
+	mntid = parent_mntid(umount_path, mnt_table, table_sz);
+	if (mntid < 0) {
+		pr_perror("Could not determine mount id of path: [%s]\n", umount_path);
 		return -1;
 	}
 
-	/* lazy unmount all direct submounts */
-	for (i = 0; i < table_sz; i++) {
-		if (mnt_table[i].parent_mntid != mntid)
+	/*
+	 * lazy unmount all direct submounts. Traverse in reverse order so that
+	 * if two child have same parent but one child masks other child, we
+	 * get to unmount top level child first
+	 *
+	 * For Example. Try following.
+	 * mount -t tmpfs none foo1/foo2
+	 * mount -t tmpfs none foo1
+	 *
+	 * Here both foo1 and foo2 are child of same parent. But we want
+	 * to unmount foo1 first and foo2 later. /proc/self/mountinfo seems
+	 * to be time ordered and we are relying on that. If not, this logic
+	 * will be broken.
+	 */
+	for (i = table_sz - 1; i >= 0; i--) {
+		if (mnt_table[i].parent_mntid != (unsigned)mntid)
 			continue;
+
+		/* This mount has to be submount of path specified */
+		if (strncmp(umount_path, mnt_table[i].destination, strlen(umount_path))) {
+			continue;
+		}
+
 		ret = umount2(mnt_table[i].destination, MNT_DETACH);
 		if (!ret)
 			pr_pinfo("Unmounted submount: [%s]\n", mnt_table[i].destination);
@@ -529,12 +598,6 @@ static int prestart(const char *rootfs,
 
 		for (int j = 0; j < nr_mapped; j++) {
 			snprintf(umount_path, PATH_MAX, "%s%s", rootfs, mapped_paths[j]);
-
-			if (!is_mounted((char *)umount_path, mnt_table, mnt_table_sz)) {
-				pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
-				continue;
-			}
-
 			ret = unmount(umount_path, mounts_on_host[i].submounts_only, mnt_table, mnt_table_sz);
 			if (ret < 0) {
 				pr_perror("Skipping unmount path: [%s]\n", umount_path);
