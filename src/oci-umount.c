@@ -24,10 +24,13 @@
 
 #define _cleanup_(x) __attribute__((cleanup(x)))
 
+#define MOUNTDIR "/usr/share/oci-umount/oci-umount.d"
+#define ETCMOUNTDIR "/etc/oci-umount/oci-umount.d"
 #define MOUNTCONF "/etc/oci-umount.conf"
 #define MOUNTINFO_PATH "/proc/self/mountinfo"
 #define MAX_UMOUNTS	128	/* Maximum number of unmounts */
 #define MAX_MAPS	128	/* Maximum number of source to dest mappings */
+#define MAX_CONFIGS	128	/* Maximum number of configs */
 
 /* Basic mount info. For now we need only destination */
 struct mount_info {
@@ -61,6 +64,12 @@ static inline void fclosep(FILE **fp) {
 	if (*fp)
 		fclose(*fp);
 	*fp = NULL;
+}
+
+static inline void closedirp(DIR **dir) {
+	if (*dir)
+		closedir(*dir);
+	*dir = NULL;
 }
 
 static inline void free_mnt_info(struct mount_info **p) {
@@ -121,6 +130,7 @@ static inline void free_config_mounts(struct config_mount_info **p) {
 
 #define _cleanup_free_ _cleanup_(freep)
 #define _cleanup_close_ _cleanup_(closep)
+#define _cleanup_dir_ _cleanup_(closedirp)
 #define _cleanup_fclose_ _cleanup_(fclosep)
 #define _cleanup_mnt_info_ _cleanup_(free_mnt_info)
 #define _cleanup_host_mounts_ _cleanup_(free_host_mounts)
@@ -412,6 +422,117 @@ static int parent_mntid(const char *id, char *path, const struct mount_info *mnt
 	return -1;
 }
 
+static int is_mount_duplicate(const char*path, struct host_mount_info *mounts_on_host, int nr_mounts) {
+	for (int i = 0; i < nr_mounts; i++) {
+		if (strcmp(mounts_on_host[i].path,path) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int readconf(const char *id, const char *conf_file, struct host_mount_info *mounts_on_host, int *number) {
+	_cleanup_fclose_ FILE *fp = NULL;
+	_cleanup_free_ char *line = NULL;
+	ssize_t read;
+	char *real_path;
+	size_t len = 0;
+	int nr_umounts = *number;
+	/* Parse conf file, canonicalize path names and skip
+	 * paths which do not exist on host */
+	fp = fopen(conf_file, "r");
+	if (fp == NULL) {
+		pr_perror("%s: Failed to open config file: %s", id, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	while ((read = getline(&line, &len, fp)) != -1) {
+		bool submounts_only = false;
+
+		/* Get rid of newline character at the end */
+		line[read - 1] = '\0';
+		read--;
+
+		if (iscomment(line))
+			continue;
+
+		if (nr_umounts == MAX_UMOUNTS) {
+			pr_perror("%s: Exceeded maximum number of supported unmounts is %d", id, MAX_UMOUNTS);
+			return EXIT_FAILURE;
+		}
+
+		// If there is a "/*" at the end, only unmount submounts
+		if (read >= 2) {
+			if (line[read - 1] == '*' && line[read - 2] == '/') {
+				submounts_only = true;
+				line[read - 1] = '\0';
+			}
+		}
+
+		real_path = realpath(line, NULL);
+		if (!real_path) {
+			pr_pdebug("%s: Failed to canonicalize path [%s]: %m. Skipping.", id, line);
+			continue;
+		}
+
+		if (is_mount_duplicate(real_path, mounts_on_host, nr_umounts)) {
+			pr_pwarning("%s: path %s from %s already exists", id, real_path, conf_file);
+			continue;
+		}
+		mounts_on_host[nr_umounts].path = real_path;
+		mounts_on_host[nr_umounts].submounts_only = submounts_only;
+		nr_umounts++;
+	}
+
+	*number = nr_umounts;
+	return 0;
+}
+
+static int addconfig(const char *id, char **configs, const char *file) {
+	for (int i = 0; i < MAX_CONFIGS; i++) {
+		if (!configs[i]) {
+			configs[i] = strdup(file);
+			if (!configs[i]) {
+				pr_perror("%s: failed to alloc %s", id, file);
+				return -1;
+			}
+			return 0;
+		}
+		if (strcmp(configs[i], file))
+			continue;
+		return 1;
+	}
+	pr_perror("%s: maximum number of configs used, can't process %s", id, file);
+	return -1;
+}
+
+static int load_config(const char *id, char **configs, const char *dirpath, struct host_mount_info *mounts_on_host, int *nr_umounts) {
+
+	/* Parse configuration dir for configuration files, canonicalize path
+	   names and read their content */
+	struct dirent *dp;
+	char conf_file[PATH_MAX];
+	_cleanup_dir_ DIR *dir = opendir(dirpath);
+	if (!dir) {
+		pr_perror("%s: Failed to read directory %s", id, dirpath);
+		return EXIT_FAILURE;
+	}
+	while ((dp = readdir(dir)) != NULL) {
+		if ( !strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..") )
+			continue;
+		/* Ignore files that have already been loaded.  This allows and
+		   admin to override the configuration by placing a file in the
+		   ETCMOUNTDIR directory with the same name as one in the
+		   MOUNTDIR directory
+		*/
+		if (addconfig(id, configs, dp->d_name))
+			continue;
+		snprintf(conf_file, sizeof(conf_file), "%s/%s", dirpath, dp->d_name);
+		if (readconf(id, conf_file, mounts_on_host, nr_umounts))
+			return -1;
+	}
+	return 0;
+}
+
 /* Returns 0 on success, negative error otherwise */
 static int unmount(const char *id, char *umount_path, bool submounts_only, const struct mount_info *mnt_table, size_t table_sz)
 {
@@ -420,7 +541,7 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 
 	if (!submounts_only) {
 		if (!is_mounted((char *)umount_path, mnt_table, table_sz)) {
-			pr_pinfo("[%s] is not a mountpoint. Skipping.", umount_path);
+			pr_pinfo("%s: [%s] is not a mountpoint. Skipping.", id, umount_path);
 			return 0;
 		}
 
@@ -490,11 +611,9 @@ static int prestart(
 	_cleanup_fclose_ FILE *fp = NULL;
 	_cleanup_host_mounts_ struct host_mount_info *mounts_on_host = NULL;
 	_cleanup_cptr_array_ char **mapped_paths = NULL;
+	_cleanup_cptr_array_ char **configs = NULL;
 	int nr_umounts = 0;
 	_cleanup_free_ char *line = NULL;
-	char *real_path;
-	size_t len = 0;
-	ssize_t read;
 	int i, ret, nr_mapped;
 
 	/* Allocate one extra element and keep it zero for cleanup function */
@@ -513,50 +632,39 @@ static int prestart(
 	}
 	memset((void *)mapped_paths, 0, (MAX_MAPS + 1) * sizeof(char *));
 
-	/* Parse oci-umounts.conf file, canonicalize path names and skip
-	 * paths which are not a mountpoint on host */
-	fp = fopen(MOUNTCONF, "r");
-	if (fp == NULL) {
-		if (errno == ENOENT) {
-			pr_pwarning("%s: Config file not found: %s", id, MOUNTCONF);
-			return 0;
-		}
-		pr_perror("%s: Failed to open config file: %s", id, MOUNTCONF);
+	/* Allocate one extra element and keep it zero for cleanup function */
+	configs = malloc((MAX_CONFIGS + 1) * sizeof(char *));
+	if (!configs) {
+		pr_perror("%s: Failed to malloc memory for configs array", id);
 		return EXIT_FAILURE;
 	}
+	memset((void *)configs, 0, (MAX_CONFIGS + 1) * sizeof(char *));
 
-	while ((read = getline(&line, &len, fp)) != -1) {
-		bool submounts_only = false;
-
-		/* Get rid of newline character at the end */
-		line[read - 1] ='\0';
-		read--;
-
-		if (iscomment(line))
-			continue;
-
-		if (nr_umounts == MAX_UMOUNTS) {
-			pr_perror("%s: Exceeded maximum number of supported unmounts is %d", id, MAX_UMOUNTS);
+	struct stat stat_buf;
+	if (stat(MOUNTCONF, &stat_buf) == 0) {
+		if (readconf(id, MOUNTCONF, mounts_on_host, &nr_umounts))
+			return -1;
+	} else {
+		if (errno != ENOENT) {
+			pr_perror("%s: Failed to stat %s file", id, MOUNTCONF);
 			return EXIT_FAILURE;
 		}
+	}
 
-		// If there is a "/*" at the end, only unmount submounts
-		if (read >= 2) {
-			if (line[read - 1] == '*' && line[read - 2] == '/') {
-				submounts_only = true;
-				line[read - 1] = '\0';
-			}
+
+	if (stat(ETCMOUNTDIR, &stat_buf) == 0) {
+		if (load_config(id, configs, ETCMOUNTDIR, mounts_on_host, &nr_umounts) < 0) {
+			return EXIT_FAILURE;
 		}
-
-		real_path = realpath(line, NULL);
-		if (!real_path) {
-			pr_pdebug("%s: Failed to canonicalize path [%s]: %m. Skipping.", id, line);
-			continue;
+	} else {
+		if (errno != ENOENT) {
+			pr_perror("%s: Failed to stat %s directory", id, ETCMOUNTDIR);
+			return EXIT_FAILURE;
 		}
+	}
 
-		mounts_on_host[nr_umounts].path = real_path;
-		mounts_on_host[nr_umounts].submounts_only = submounts_only;
-		nr_umounts++;
+	if (load_config(id, configs, MOUNTDIR, mounts_on_host, &nr_umounts) < 0) {
+		return EXIT_FAILURE;
 	}
 
 	if (!nr_umounts)
