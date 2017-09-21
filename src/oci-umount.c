@@ -746,9 +746,9 @@ static int parseBundle(const char *id, yajl_val *node_ptr, char **rootfs, struct
 	config_node = yajl_tree_parse((const char *)configData, errbuf, sizeof(errbuf));
 	if (config_node == NULL) {
 		if (strlen(errbuf)) {
-			pr_perror("parse error: %s: %s: %s", id, config_file_name, errbuf);
+			pr_perror("%s: parse error: %s: %s", id, config_file_name, errbuf);
 		} else {
-			pr_perror("parse error: %s: %s: unknown error", id, config_file_name);
+			pr_perror("%s: parse error: %s: unknown error", id, config_file_name);
 		}
 		return EXIT_FAILURE;
 	}
