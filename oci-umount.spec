@@ -52,6 +52,9 @@ make %{?_smp_mflags}
 %dir /%{_sysconfdir}/containers/oci/hooks.d
 %dir /usr/share/containers/oci/hooks.d
 /usr/share/containers/oci/hooks.d/oci-umount.json
+/usr/share/oci-umount/oci-umount.d
+%ghost /etc/oci-umount/oci-umount.d
+
 
 %changelog
 * Wed Aug 16 2017 Dan Walsh <dwalsh@redhat.com> - 2.1.1
