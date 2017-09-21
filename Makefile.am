@@ -27,6 +27,7 @@ rpm: spec
 
 install-data-local:
 	$(MKDIR_P) $(DESTDIR)/etc/containers/oci/hooks.d
+	$(MKDIR_P) $(DESTDIR)/usr/share/oci-umount/oci-umount.d
 
 clean-local:
 	-rm -f oci-umount.1 *~
