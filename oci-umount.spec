@@ -9,7 +9,7 @@
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-umount
-Version:        2.1
+Version:        2.2
 Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI umount hook for docker
 Group:          Applications/Text
@@ -57,6 +57,10 @@ make %{?_smp_mflags}
 
 
 %changelog
+* Thu Sep 21 2017 Dan Walsh <dwalsh@redhat.com> - 2.2.1
+- Add support for alternate configuration files in /etc/oci-umount/oci-umount.d and
+  /usr/share/oci-umount/oci-umount.d
+- Support /* syntax to allow us to specify all mountpoints below a path.
 * Wed Aug 16 2017 Dan Walsh <dwalsh@redhat.com> - 2.1.1
 - Add support for /usr/share/containers/oci/hooks.d json files
 
