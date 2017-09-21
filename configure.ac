@@ -1,4 +1,4 @@
-AC_INIT([OCI Umount], 2.1.0)
+AC_INIT([OCI Umount], 2.2.0)
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror subdir-objects])
