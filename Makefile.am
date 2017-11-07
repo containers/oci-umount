@@ -7,6 +7,9 @@ oci_umount_json_CONFIG = oci-umount-json
 oci_umount_json_DATA = oci-umount.json
 oci_umount_jsondir=/usr/share/containers/oci/hooks.d
 
+oci_umount_options_DATA = oci-umount-options.conf
+oci_umount_optionsdir=/usr/share/oci-umount/
+
 oci_umount_CFLAGS = -Wall -Wextra -std=c99 $(YAJL_CFLAGS)
 oci_umount_LDADD = $(YAJL_LIBS)
 oci_umount_CFLAGS += $(SELINUX_CFLAGS)
