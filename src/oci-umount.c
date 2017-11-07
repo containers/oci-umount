@@ -27,10 +27,37 @@
 #define MOUNTDIR "/usr/share/oci-umount/oci-umount.d"
 #define ETCMOUNTDIR "/etc/oci-umount/oci-umount.d"
 #define MOUNTCONF "/etc/oci-umount.conf"
+#define OPTIONSCONF "/usr/share/oci-umount/oci-umount-options.conf"
+#define ETCOPTIONSCONF "/etc/oci-umount/oci-umount-options.conf"
 #define MOUNTINFO_PATH "/proc/self/mountinfo"
 #define MAX_UMOUNTS	128	/* Maximum number of unmounts */
 #define MAX_MAPS	128	/* Maximum number of source to dest mappings */
 #define MAX_CONFIGS	128	/* Maximum number of configs */
+
+struct log_mapping {
+	char *str;
+	int level;
+};
+
+#define NR_LOG_LEVELS		8
+
+static struct log_mapping log_levels[NR_LOG_LEVELS] = {
+	{"LOG_EMERG", LOG_EMERG},
+	{"LOG_ALTERT", LOG_ALERT},
+	{"LOG_CRIT", LOG_CRIT},
+	{"LOG_ERR", LOG_ERR},
+	{"LOG_WARNING", LOG_WARNING},
+	{"LOG_NOTICE", LOG_NOTICE},
+	{"LOG_INFO", LOG_INFO},
+	{"LOG_DEBUG", LOG_DEBUG},
+};
+
+static int log_level=LOG_DEBUG;
+
+enum inisection {
+	SECTION_NONE,
+	SECTION_OPTIONS,
+};
 
 /* Basic mount info. For now we need only destination */
 struct mount_info {
@@ -147,7 +174,7 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "umounthook <error>: " fmt ": %m\n", ##__VA_ARGS__)
 #define pr_pinfo(fmt, ...) syslog(LOG_INFO, "umounthook <info>: " fmt "\n", ##__VA_ARGS__)
-#define pr_pwarning(fmt, ...) syslog(LOG_INFO, "umounthook <warning>: " fmt "\n", ##__VA_ARGS__)
+#define pr_pwarning(fmt, ...) syslog(LOG_WARNING, "umounthook <warning>: " fmt "\n", ##__VA_ARGS__)
 #define pr_pdebug(fmt, ...) syslog(LOG_DEBUG, "umounthook <debug>: " fmt "\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
@@ -430,6 +457,121 @@ static int is_mount_duplicate(const char*path, struct host_mount_info *mounts_on
 	return 0;
 }
 
+/* Remove leading and trailing whitespaces from string */
+static char *trim_whitespaces(char *str)
+{
+	char *end;
+
+	while(isspace(*str)) str++;
+
+	if (*str == '\0')
+		return str;
+
+	end = str + strlen(str) - 1;
+
+	while(end > str) {
+		if (!isspace(*end))
+			break;
+		end--;
+	}
+
+	end[1] = '\0';
+	return str;
+}
+
+static int parse_options_section_line(const char *id, const char *conf_file, char *line) {
+	int i;
+	char *name, *value, *equal_ptr;
+
+
+	equal_ptr = strchr(line, '=');
+	if (!equal_ptr) {
+		pr_perror("%s: Invalid name=value option %s in file %s", id, line, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	*equal_ptr = '\0';
+
+	name = trim_whitespaces(line);
+	if (strcmp(name, "log_level")) {
+		pr_perror("%s: Unknown option %s in file %s", id, name, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	if (equal_ptr[1] == '\0') {
+		pr_perror("%s: Specify a value for option log_level in file %s", id, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	value = trim_whitespaces(equal_ptr + 1);
+	if (*value == '\0') {
+		pr_perror("%s: Specify a value for option log_level in file %s", id, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	for (i = 0; i < NR_LOG_LEVELS; i++) {
+		if (!strcmp(value, log_levels[i].str)) {
+			log_level = log_levels[i].level;
+			setlogmask(LOG_UPTO(log_level));
+			return 0;
+		}
+	}
+
+	pr_perror("%s: Unknown log level [%s] in file %s", id, value, conf_file);
+	return EXIT_FAILURE;
+}
+
+/* Parse ini format config file */
+static int read_iniconfig(const char *id, const char *conf_file) {
+	_cleanup_fclose_ FILE *fp = NULL;
+	_cleanup_free_ char *line = NULL;
+	ssize_t read;
+	size_t len = 0;
+	int ret = 0;
+	enum inisection current_section = SECTION_NONE;
+
+	/* Parse conf file, canonicalize path names and skip
+	 * paths which do not exist on host */
+	fp = fopen(conf_file, "r");
+	if (fp == NULL) {
+		pr_perror("%s: Failed to open config file: %s", id, conf_file);
+		return EXIT_FAILURE;
+	}
+
+	while ((read = getline(&line, &len, fp)) != -1) {
+		/* Get rid of newline character at the end */
+		line[read - 1] = '\0';
+		read--;
+
+		if (iscomment(line))
+			continue;
+
+		/* Check if this is a section line */
+		if (line[0] == '[') {
+			if (!strcmp(line, "[options]")) {
+				current_section = SECTION_OPTIONS;
+				continue;
+			} else {
+				pr_perror("%s: Invalid section name %s in config file %s", id, line, conf_file);
+				return EXIT_FAILURE;
+			}
+		}
+
+
+		if (current_section == SECTION_NONE) {
+			pr_perror("%s: Line %s in config %s is not part of any of the known sections.", id, line, conf_file);
+			return EXIT_FAILURE;
+		}
+
+		/* If we are here, we got a line from a section */
+		ret = parse_options_section_line(id, conf_file, line) ;
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int readconf(const char *id, const char *conf_file, struct host_mount_info *mounts_on_host, int *number) {
 	_cleanup_fclose_ FILE *fp = NULL;
 	_cleanup_free_ char *line = NULL;
@@ -592,6 +734,32 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 	return 0;
 }
 
+static int parse_oci_umount_options(const char *id) {
+	struct stat stat_buf;
+
+	if (stat(OPTIONSCONF, &stat_buf) == 0) {
+		if (read_iniconfig(id, OPTIONSCONF))
+			return EXIT_FAILURE;
+	} else {
+		if (errno != ENOENT) {
+			pr_perror("%s: Failed to stat %s file", id, OPTIONSCONF);
+			return EXIT_FAILURE;
+		}
+	}
+
+	if (stat(ETCOPTIONSCONF, &stat_buf) == 0) {
+		if (read_iniconfig(id, ETCOPTIONSCONF))
+			return EXIT_FAILURE;
+	} else {
+		if (errno != ENOENT) {
+			pr_perror("%s: Failed to stat %s file", id, ETCOPTIONSCONF);
+			return EXIT_FAILURE;
+		}
+	}
+
+	return 0;
+}
+
 static int prestart(
 	const char *id,
 	const char *rootfs,
@@ -639,6 +807,14 @@ static int prestart(
 		return EXIT_FAILURE;
 	}
 	memset((void *)configs, 0, (MAX_CONFIGS + 1) * sizeof(char *));
+
+	/*
+	 * Parse oci-umount options (oci-umount-options.conf). First parse the
+	 * copy in /usr/ followed by copy in /etc/. File in /etc/ will override
+	 * any settings by file in /usr/.
+	 */
+	if (parse_oci_umount_options(id))
+		return EXIT_FAILURE;
 
 	struct stat stat_buf;
 	if (stat(MOUNTCONF, &stat_buf) == 0) {
@@ -956,6 +1132,8 @@ int main(int argc, char *argv[])
 	int ret;
 	_cleanup_config_mounts_ struct config_mount_info *config_mounts = NULL;
 	size_t config_mounts_len = 0;
+
+	setlogmask(LOG_UPTO(log_level));
 
 	/* Read the entire state from stdin */
 	snprintf(errbuf, BUFLEN, "failed to read state data from standard input");
