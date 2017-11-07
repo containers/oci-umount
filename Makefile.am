@@ -12,8 +12,8 @@ oci_umount_optionsdir=/usr/share/oci-umount/
 
 oci_umount_CFLAGS = -Wall -Wextra -std=c99 $(YAJL_CFLAGS)
 oci_umount_LDADD = $(YAJL_LIBS)
-oci_umount_CFLAGS += $(SELINUX_CFLAGS)
-oci_umount_LDADD += $(SELINUX_LIBS)
+oci_umount_CFLAGS += $(SELINUX_CFLAGS) $(GLIB_CFLAGS)
+oci_umount_LDADD += $(SELINUX_LIBS) $(GLIB_LIBS)
 
 dist_man_MANS = oci-umount.1
 EXTRA_DIST = README.md LICENSE
