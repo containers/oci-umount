@@ -53,7 +53,9 @@ make %{?_smp_mflags}
 %dir /usr/share/containers/oci/hooks.d
 /usr/share/containers/oci/hooks.d/oci-umount.json
 /usr/share/oci-umount/oci-umount.d
+/usr/share/oci-umount/oci-umount-options.conf
 %ghost /etc/oci-umount/oci-umount.d
+%ghost /etc/oci-umount/oci-umount-options.conf
 
 
 %changelog
