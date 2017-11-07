@@ -9,7 +9,7 @@
 %global shortcommit     %(c=%{commit}; echo ${c:0:7})
 
 Name:           oci-umount
-Version:        2.2
+Version:        2.3
 Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI umount hook for docker
 Group:          Applications/Text
@@ -59,6 +59,9 @@ make %{?_smp_mflags}
 
 
 %changelog
+* Tue Nov 7 2017 Dan Walsh <dwalsh@redhat.com> - 2.3.1
+- Add support for new config file to turn down the logging.
+
 * Thu Sep 21 2017 Dan Walsh <dwalsh@redhat.com> - 2.2.1
 - Add support for alternate configuration files in /etc/oci-umount/oci-umount.d and
   /usr/share/oci-umount/oci-umount.d
