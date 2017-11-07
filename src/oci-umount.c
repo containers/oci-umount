@@ -32,6 +32,8 @@
 #define MAX_MAPS	128	/* Maximum number of source to dest mappings */
 #define MAX_CONFIGS	128	/* Maximum number of configs */
 
+static int log_level=LOG_DEBUG;
+
 /* Basic mount info. For now we need only destination */
 struct mount_info {
 	char *destination;
@@ -956,6 +958,8 @@ int main(int argc, char *argv[])
 	int ret;
 	_cleanup_config_mounts_ struct config_mount_info *config_mounts = NULL;
 	size_t config_mounts_len = 0;
+
+	setlogmask(LOG_UPTO(log_level));
 
 	/* Read the entire state from stdin */
 	snprintf(errbuf, BUFLEN, "failed to read state data from standard input");
