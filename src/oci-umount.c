@@ -147,7 +147,7 @@ DEFINE_CLEANUP_FUNC(yajl_val, yajl_tree_free)
 
 #define pr_perror(fmt, ...) syslog(LOG_ERR, "umounthook <error>: " fmt ": %m\n", ##__VA_ARGS__)
 #define pr_pinfo(fmt, ...) syslog(LOG_INFO, "umounthook <info>: " fmt "\n", ##__VA_ARGS__)
-#define pr_pwarning(fmt, ...) syslog(LOG_INFO, "umounthook <warning>: " fmt "\n", ##__VA_ARGS__)
+#define pr_pwarning(fmt, ...) syslog(LOG_WARNING, "umounthook <warning>: " fmt "\n", ##__VA_ARGS__)
 #define pr_pdebug(fmt, ...) syslog(LOG_DEBUG, "umounthook <debug>: " fmt "\n", ##__VA_ARGS__)
 
 #define BUFLEN 1024
