@@ -876,12 +876,12 @@ static int prestart(
 	for (i = 0; i < nr_umounts; i++) {
 		nr_mapped = map_mount_host_to_container(id, config_mounts, config_mounts_len, mounts_on_host[i].path, mapped_paths, MAX_MAPS);
 		if (nr_mapped < 0) {
-			pr_perror("%s: Error while trying to map mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
+			pr_perror("%s: Error while trying to map mount [%s] from host to container. Skipping.", id, mounts_on_host[i].path);
 			continue;
 		}
 
 		if (!nr_mapped) {
-			pr_pdebug("%s: Could not find mapping for mount [%s] from host to conatiner. Skipping.", id, mounts_on_host[i].path);
+			pr_pdebug("%s: Could not find mapping for mount [%s] from host to container. Skipping.", id, mounts_on_host[i].path);
 			continue;
 		}
 
