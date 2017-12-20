@@ -1,5 +1,5 @@
 {
     "hasbindmounts": true,
     "hook": "/usr/libexec/oci/hooks.d/oci-umount",
-    "stages": [ "prestart" ]
+    "stage": [ "prestart" ]
 }
