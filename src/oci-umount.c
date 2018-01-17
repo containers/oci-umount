@@ -1177,12 +1177,17 @@ int main(int argc, char *argv[])
 	/* OCI hooks set target_pid to 0 on poststop, as the container process
 	   already exited.  If target_pid is bigger than 0 then it is a start
 	   hook.
-	   In most cases the calling program should pass in a argv[1] option,
-	   like prestart, poststart or poststop.  In certain cases we also
-	   support passing of no argv[1], and then default to prestart if the
-	   target_pid != 0, poststop if target_pid == 0.
+	   In most cases the calling program should set the environment variable "stage"
+	   like prestart, poststart or poststop.
+	   We also support passing the stage as argv[1],
+	   In certain cases we also support passing of no argv[1], and no environment variable,
+	   then default to prestart if the target_pid != 0, poststop if target_pid == 0.
 	*/
-	if ((argc >= 2 && !strcmp("prestart", argv[1])) ||
+	char *stage = getenv("stage");
+	if (stage == NULL && argc > 2) {
+		stage = argv[1];
+	}
+	if ((stage != NULL && !strcmp(stage, "prestart")) ||
 	    (argc == 1 && target_pid)) {
 		_cleanup_free_ char *rootfs=NULL;
 		ret = parseBundle(id, &node, &rootfs, &config_mounts, &config_mounts_len);
@@ -1193,11 +1198,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	} else {
-		if (argc >= 2) {
-			pr_pdebug("%s: %s ignored", id, argv[1]);
-		} else {
-			pr_pdebug("%s: No args ignoring", id);
-		}
+		pr_pdebug("%s: only runs in prestart stage, ignoring", id);
 	}
 
 	return EXIT_SUCCESS;
