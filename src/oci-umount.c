@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <glib.h>
 #include <stdio.h>
 #include <libgen.h>
 #include <stdlib.h>
@@ -363,11 +364,7 @@ static int map_mount_host_to_container(const char *id, const struct config_mount
 	int ret;
 	unsigned nr_mapped = 0;
 
-	host_mnt_dup = strdup(host_mnt);
-	if (!host_mnt_dup) {
-		pr_perror("%s: strdup(%s) failed.", id, host_mnt);
-		return -1;
-	}
+	host_mnt_dup = g_strdup(host_mnt);
 
 	str = host_mnt_dup;
 	do {
