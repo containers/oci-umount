@@ -10,7 +10,7 @@
 
 Name:           oci-umount
 Epoch:          2
-Version:        2.3.2
+Version:        2.3.3
 Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI umount hook for docker
 Group:          Applications/Text
@@ -65,6 +65,9 @@ install -d %{buildroot}%{_datadir}/%{name}/%{name}.d
 %ghost /etc/oci-umount/oci-umount-options.conf
 
 %changelog
+* Mon Jan 22 2018 Dan Walsh <dwalsh@redhat.com> - 2:2.3.3-1.git
+- Support passing of stage via stage environment variable.
+
 * Thu Dec 21 2017 Dan Walsh <dwalsh@redhat.com> - 2:2.3.2-1.git
 - Fix oci-umount to run in stages to support CRI-O
 
