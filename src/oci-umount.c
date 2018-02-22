@@ -1166,29 +1166,27 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	int target_pid = 0;
 	const char *pid_path[] = { "pid", (const char *) 0 };
 	yajl_val v_pid = yajl_tree_get(node, pid_path, yajl_t_number);
-	if (!v_pid) {
-		pr_perror("%s: pid not found in state", id);
+	if (v_pid) {
+		target_pid = YAJL_GET_INTEGER(v_pid);
+	}
+
+	const char *status_path[] = { "status", (const char *) 0 };
+	yajl_val v_status = yajl_tree_get(node, status_path, yajl_t_string);
+	if (!v_status) {
+		pr_perror("status not found in state");
 		return EXIT_FAILURE;
 	}
-	int target_pid = YAJL_GET_INTEGER(v_pid);
+	const char *status = YAJL_GET_STRING(v_status);
 
-	/* OCI hooks set target_pid to 0 on poststop, as the container process
-	   already exited.  If target_pid is bigger than 0 then it is a start
-	   hook.
-	   In most cases the calling program should set the environment variable "stage"
-	   like prestart, poststart or poststop.
-	   We also support passing the stage as argv[1],
-	   In certain cases we also support passing of no argv[1], and no environment variable,
-	   then default to prestart if the target_pid != 0, poststop if target_pid == 0.
-	*/
-	char *stage = getenv("stage");
-	if (stage == NULL && argc > 2) {
-		stage = argv[1];
-	}
-	if ((stage != NULL && !strcmp(stage, "prestart")) ||
-	    (argc == 1 && target_pid)) {
+	if (strcmp(status, "created") == 0) {
+		if (!target_pid) {
+			pr_perror("state pid must be set >0 when status is 'created'");
+			return EXIT_FAILURE;
+		}
+
 		_cleanup_free_ char *rootfs=NULL;
 		ret = parseBundle(id, &node, &rootfs, &config_mounts, &config_mounts_len);
 		if (ret < 0)
@@ -1198,7 +1196,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	} else {
-		pr_pdebug("%s: only runs in prestart stage, ignoring", id);
+		pr_pdebug("%s: only runs on created containers, ignoring %s container", id, status);
 	}
 
 	return EXIT_SUCCESS;
