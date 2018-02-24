@@ -16,7 +16,6 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <linux/limits.h>
-#include <selinux/selinux.h>
 #include <yajl/yajl_tree.h>
 #include <ctype.h>
 

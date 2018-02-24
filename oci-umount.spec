@@ -27,7 +27,6 @@ BuildRequires:  gcc
 BuildRequires:  autoconf
 BuildRequires:  automake
 BuildRequires:  pkgconfig(yajl)
-BuildRequires:  pkgconfig(libselinux)
 BuildRequires:  pkgconfig(mount)
 BuildRequires:  golang-github-cpuguy83-go-md2man
 BuildRequires:  pcre-devel
