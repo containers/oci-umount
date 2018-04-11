@@ -28,7 +28,8 @@
 #define MOUNTCONF "/etc/oci-umount.conf"
 #define OPTIONSCONF "/usr/share/oci-umount/oci-umount-options.conf"
 #define ETCOPTIONSCONF "/etc/oci-umount/oci-umount-options.conf"
-#define MOUNTINFO_PATH "/proc/self/mountinfo"
+#define MOUNTINFO_DIR_NAME "/proc/self"
+#define MOUNTINFO_FILE_NAME "mountinfo"
 #define MAX_UMOUNTS	128	/* Maximum number of unmounts */
 #define MAX_MAPS	128	/* Maximum number of source to dest mappings */
 #define MAX_CONFIGS	128	/* Maximum number of configs */
@@ -214,7 +215,7 @@ static void *grow_mountinfo_table(void *curr_table, size_t curr_sz, size_t new_s
 	return table;
 }
 
-static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
+static int parse_mountinfo(int proc_self_fd, const char *id, struct mount_info **info, size_t *sz)
 {
 	_cleanup_fclose_ FILE *fp;
 	_cleanup_mnt_info_ struct mount_info *mnt_table = NULL;
@@ -230,9 +231,15 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 	size_t len = 0;
 	int table_idx = 0;
 
-	fp = fopen(MOUNTINFO_PATH, "r");
+	_cleanup_close_ int fd = openat(proc_self_fd, MOUNTINFO_FILE_NAME, O_RDONLY);
+	if (fd < 0) {
+		pr_perror("%s: Failed to open %s %m", id, MOUNTINFO_FILE_NAME);
+		return -1;
+	}
+
+	fp = fdopen(fd, "r");
 	if (!fp) {
-		pr_perror("%s: Failed to open %s %m", id, MOUNTINFO_PATH);
+		pr_perror("%s: Failed to open %s %m", id, MOUNTINFO_FILE_NAME);
 		return -1;
 	}
 
@@ -853,6 +860,12 @@ static int prestart(
 		return EXIT_FAILURE;
 	}
 
+	_cleanup_close_ int proc_self_dir = open(MOUNTINFO_DIR_NAME, O_RDONLY);
+	if (proc_self_dir < 0) {
+		pr_perror("%s: Failed to open %s %m", id, MOUNTINFO_DIR_NAME);
+		return EXIT_FAILURE;
+	}
+
 	/* Join the mount namespace of the target process */
 	if (setns(fd, 0) == -1) {
 		pr_perror("%s: Failed to setns to %s", id, process_mnt_ns_fd);
@@ -866,7 +879,7 @@ static int prestart(
 	}
 
 	/* Parse mount table */
-	ret = parse_mountinfo(id, &mnt_table, &mnt_table_sz);
+	ret = parse_mountinfo(proc_self_dir, id, &mnt_table, &mnt_table_sz);
 	if (ret < 0) {
 		pr_perror("%s: Failed to parse mountinfo table", id);
 		return EXIT_FAILURE;
