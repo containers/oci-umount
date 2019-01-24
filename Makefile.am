@@ -14,10 +14,18 @@ oci_umount_CFLAGS = -Wall -Wextra -std=c99 $(YAJL_CFLAGS)
 oci_umount_LDADD = $(YAJL_LIBS)
 
 dist_man_MANS = oci-umount.1
+dist_man_MANS += oci-umount.conf.5
+dist_man_MANS += oci-umount-options.conf.5
 EXTRA_DIST = README.md LICENSE
 
 oci-umount.1: doc/oci-umount.1.md
 	go-md2man -in doc/oci-umount.1.md -out oci-umount.1
+
+oci-umount.conf.5: doc/oci-umount.conf.5.md
+	go-md2man -in doc/oci-umount.conf.5.md -out oci-umount.conf.5
+
+oci-umount-options.conf.5: doc/oci-umount-options.conf.5.md
+	go-md2man -in doc/oci-umount-options.conf.5.md -out oci-umount-options.conf.5
 
 spec: oci-umount.spec
 	spectool -g oci-umount.spec
