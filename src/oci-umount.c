@@ -323,18 +323,18 @@ static int map_one_entry(const char *id, const struct config_mount_info *config_
 			pr_perror("%s: Mapped destination=%s and suffix=%s together are longer than PATH_MAX", id, dest, suffix);
 		}
 
-		strcpy(path, config_mounts[i].destination);
+		strncpy(path, config_mounts[i].destination, sizeof(path)-1);
 		if (suffix)
 			strcat(path, suffix);
+
+		if (*nr_mapped >= max_mapped) {
+			pr_perror("%s: Mapping array is full (size=%d). Can't add another entry.", id, *nr_mapped);
+			return -1;
+		}
 
 		str = strdup(path);
 		if (!str) {
 			pr_perror("%s: strdup(%s) failed.", id, path);
-			return -1;
-		}
-
-		if (*nr_mapped >= max_mapped) {
-			pr_perror("%s: Mapping array is full (size=%d). Can't add another entry.", id, *nr_mapped);
 			return -1;
 		}
 
