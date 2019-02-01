@@ -10,7 +10,7 @@
 
 Name:           oci-umount
 Epoch:          2
-Version:        2.3.4
+Version:        2.5
 Release:        1.git%{shortcommit}%{?dist}
 Summary:        OCI umount hook for docker
 Group:          Applications/Text
@@ -64,6 +64,10 @@ install -d %{buildroot}%{_datadir}/%{name}/%{name}.d
 %ghost /etc/oci-umount/oci-umount-options.conf
 
 %changelog
+* Fri Feb 1 2019 Dan Walsh <dwalsh@redhat.com> - 2:2.5.1-1.git
+- Add man page.
+- Cleanup issues fround with coverity
+
 * Wed Feb 28 2018 Dan Walsh <dwalsh@redhat.com> - 2:2.4.1-1.git
 - Add new paths for CRI-O
 
