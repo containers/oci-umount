@@ -240,13 +240,11 @@ static int parse_mountinfo(const char *id, struct mount_info **info, size_t *sz)
 	 * Alaways allocate one member extra at the end and keep it zero so
 	 * that cleanup function can find the end of array.
 	 */
-	mnt_table = (struct mount_info *)realloc(NULL, table_sz_bytes);
+	mnt_table = (struct mount_info *)calloc(1, table_sz_bytes);
 	if (!mnt_table) {
 		pr_perror("%s: Failed to allocate memory for mount tabel", id);
 		return -1;
 	}
-
-	memset(mnt_table, 0, table_sz_bytes);
 
 	while ((getline(&line, &len, fp)) != -1) {
 		char *token, *str = line, *dest;
