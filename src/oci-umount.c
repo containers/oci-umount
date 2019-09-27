@@ -902,7 +902,7 @@ static int prestart(
 char *getJSONstring(FILE *from, size_t chunksize, char *msg)
 {
 	struct stat stat_buf;
-	char *err = NULL, *JSONstring = NULL;
+	char *err = NULL, *JSONstring = NULL, *JSONstring_new = NULL;
 	size_t nbytes, bufsize;
 
 	if (fstat(fileno(from), &stat_buf) == -1) {
@@ -944,11 +944,12 @@ char *getJSONstring(FILE *from, size_t chunksize, char *msg)
 		bufsize = 0;
 
 		for (;;) {
-			JSONstring = (char *)realloc((void *)JSONstring, bufsize + chunksize);
-			if (JSONstring == NULL) {
+			JSONstring_new = (char *)realloc((void *)JSONstring, bufsize + chunksize);
+			if (JSONstring_new == NULL) {
 				err = "failed to allocate buffer";
 				goto fail;
 			}
+			JSONstring = JSONstring_new;
 
 			nbytes = fread((void *)&JSONstring[bufsize], 1, (size_t)chunksize, from);
 			bufsize += nbytes;
@@ -968,11 +969,12 @@ char *getJSONstring(FILE *from, size_t chunksize, char *msg)
 			goto fail;
 		}
 
-		JSONstring = (char *)realloc((void *)JSONstring, bufsize + 1);
-		if (JSONstring == NULL) {
+		JSONstring_new = (char *)realloc((void *)JSONstring, bufsize + 1);
+		if (JSONstring_new == NULL) {
 			err = "failed to allocate buffer";
 			goto fail;
 		}
+		JSONstring = JSONstring_new;
 	}
 
 	/* make sure the string is NULL-terminated */
