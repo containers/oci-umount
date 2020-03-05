@@ -18,7 +18,7 @@
 #include <linux/limits.h>
 #include <yajl/yajl_tree.h>
 #include <ctype.h>
-
+#include <sys/statfs.h>
 #include "config.h"
 
 #define _cleanup_(x) __attribute__((cleanup(x)))
@@ -684,6 +684,15 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 			return 0;
 		}
 
+		/* Here dont lazy umount NFS filesystem f_type : NFS_SUPER_MAGIC 0x6969 */
+		if ( (statfs(umount_path, &fs) != 0)
+			pr_perror("statfs of %s failed \n");
+		
+		if (fs.f_type == 0x6969)
+			ret = umount(umount_path);
+		else
+			ret = umount2(umount_path, MNT_DETACH);
+	 	
 		ret = umount2(umount_path, MNT_DETACH);
 		if (!ret)
 			pr_pinfo("%s: Unmounted: [%s]", id, umount_path);
@@ -722,7 +731,21 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 			continue;
 		}
 
-		ret = umount2(mnt_table[i].destination, MNT_DETACH);
+		/*
+		 Here DONT lazy unmount for NFS mounts as it causes serious problems of hung tasks which are doing NFS IO,
+		 we see them in vmcore in UNinterruptible state and also will be hung indefinitely. In some cases we have
+		 seen the NFS IO tasks in blocked UN state not even allowing the reboot/shutdown task to progress as the
+		 shutdown gets into  blocked UNinterruptile state waiting for NFS superblock synching of inodes before shutdown.
+		 But the NFS tasks wont progress and are blocked waiting because the network interfaces were already down by this
+		 stage and NFS IO is held up. Although the lazy umount removes it from the mount table we have seen the superblock.s_count
+		 and s_active reflecting it in use and holding the number of refernces by several tasks for NFS IO.
+		 */
+
+		if (fs.f_type == 0x6969)
+			ret = umount(mnt_table[i].destination);
+		else
+			ret = umount2(mnt_table[i].destination, MNT_DETACH);
+
 		if (!ret)
 			pr_pinfo("%s: Unmounted submount: [%s]", id, mnt_table[i].destination);
 		else
