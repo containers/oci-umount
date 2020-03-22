@@ -692,8 +692,7 @@ static int unmount(const char *id, char *umount_path, bool submounts_only, const
 			ret = umount(umount_path);
 		else
 			ret = umount2(umount_path, MNT_DETACH);
-	 	
-		ret = umount2(umount_path, MNT_DETACH);
+		  
 		if (!ret)
 			pr_pinfo("%s: Unmounted: [%s]", id, umount_path);
 		else
